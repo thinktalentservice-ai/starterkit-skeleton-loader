@@ -78,6 +78,11 @@ async function loadChromium() {
 }
 
 const round = (value) => Math.round(value * 10) / 10;
+
+// The name becomes a file name, and it is read out of the page being captured.
+// A page is not a trusted source of paths: "../../x" would write wherever it
+// pointed. Letters, digits, dot, dash and underscore only, not starting with a dot.
+const SAFE_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 const BONE = "var(--auto-skeleton-bone)";
 
 /**
@@ -159,6 +164,7 @@ const browser = await chromium.launch();
 /** name -> { viewport -> snapshot } */
 const captured = new Map();
 const stillLoading = new Set();
+const unsafeNames = new Set();
 
 try {
   for (const viewport of breakpoints) {
@@ -177,6 +183,10 @@ try {
       await page.evaluate(`${extractor}\n;globalThis.AutoSkeletonExtract = AutoSkeletonExtract;`);
       for (const found of await page.evaluate(measureInPage)) {
         if (values.name?.length && !values.name.includes(found.name)) continue;
+        if (!SAFE_NAME.test(found.name)) {
+          unsafeNames.add(found.name);
+          continue;
+        }
         if (found.loading) {
           stillLoading.add(found.name);
           continue;
@@ -200,18 +210,31 @@ try {
   await browser.close();
 }
 
-await mkdir(values.out, { recursive: true });
+const outDir = path.resolve(values.out);
+await mkdir(outDir, { recursive: true });
 for (const [name, byViewport] of captured) {
   // One line per viewport: small on disk, and a re-capture diffs per breakpoint.
   const lines = Object.entries(byViewport).map(
     ([viewport, snapshot]) => `    ${JSON.stringify(viewport)}: ${JSON.stringify(snapshot)}`,
   );
-  const file = path.join(values.out, `${name}.bones.json`);
+  const file = path.join(outDir, `${name}.bones.json`);
+  // Belt and braces behind SAFE_NAME: never write outside the folder asked for.
+  if (path.dirname(file) !== outDir) {
+    unsafeNames.add(name);
+    continue;
+  }
   await writeFile(file, `{\n  "name": ${JSON.stringify(name)},\n  "breakpoints": {\n${lines.join(",\n")}\n  }\n}\n`);
   const summary = Object.entries(byViewport)
     .map(([viewport, snapshot]) => `${viewport}px: ${snapshot.bones.length}`)
     .join(", ");
-  console.log(`✓ ${file}  (pieces — ${summary})`);
+  console.log(`✓ ${path.relative(process.cwd(), file)}  (pieces — ${summary})`);
+}
+
+for (const name of unsafeNames) {
+  console.error(
+    `✖ ${JSON.stringify(name)} is not a safe file name — nothing written for it. ` +
+      "Use letters, digits, dot, dash and underscore in the skeleton's `name`.",
+  );
 }
 
 for (const name of stillLoading) {
@@ -219,7 +242,9 @@ for (const name of stillLoading) {
     console.error(`✖ "${name}" was still loading when the page settled — nothing captured. Try a longer --wait.`);
   }
 }
-if (captured.size === 0) {
+if (captured.size === 0 && unsafeNames.size === 0) {
   console.error('✖ Nothing captured. Is there an <AutoSkeleton name="…"> on the page, showing its real content?');
-  process.exit(1);
 }
+// A refused name is a failure even when other skeletons on the page were
+// written: a script calling this must not read a partial capture as success.
+if (captured.size === 0 || unsafeNames.size > 0) process.exit(1);

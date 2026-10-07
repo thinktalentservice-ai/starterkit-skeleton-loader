@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -131,6 +131,31 @@ test("the capture command writes a theme-neutral shape for every breakpoint", as
     expect(wide.bones.every((bone: { clip?: unknown }) => bone.clip === undefined)).toBe(true);
   } finally {
     await rm(out, { recursive: true, force: true });
+  }
+});
+
+test("the capture command refuses a skeleton name that would escape the output folder", async ({ baseURL }) => {
+  // The file name comes from the page being captured. A page is not a trusted
+  // source of paths: `name="../escaped"` must not write beside the out dir.
+  const parent = await mkdtemp(path.join(tmpdir(), "auto-skeleton-"));
+  const out = path.join(parent, "out");
+  try {
+    const failure = await run(process.execPath, [
+      "bin/auto-skeleton.mjs",
+      "--url",
+      `${baseURL}/?loading=0&name=${encodeURIComponent("../escaped")}`,
+      "--out",
+      out,
+      "--breakpoints",
+      "1280",
+      "--wait",
+      "300",
+    ]).catch((error: { code: number; stderr: string }) => error);
+    expect((failure as { code: number }).code).toBe(1);
+    expect((failure as { stderr: string }).stderr).toContain("not a safe file name");
+    expect(await readdir(parent)).toEqual(expect.not.arrayContaining(["escaped.bones.json"]));
+  } finally {
+    await rm(parent, { recursive: true, force: true });
   }
 });
 

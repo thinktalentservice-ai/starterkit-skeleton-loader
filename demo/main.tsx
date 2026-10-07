@@ -71,7 +71,8 @@ function App() {
   const skeleton = (
     <AutoSkeleton
       loading={loading}
-      name="accounts"
+      // ?name=… lets a spec present the capture command with a hostile name.
+      name={params.get("name") ?? "accounts"}
       animation={animation}
       mode={params.get("mode") === "css" ? "css" : "measure"}
       className="grid"

@@ -200,6 +200,10 @@ runs it, and the app running. Each wrapper needs a `name` and must be showing
 its real content when the page settles; one still loading is reported, not
 silently skipped.
 
+The `name` becomes the file name, so it may only contain letters, digits, `.`,
+`-` and `_`. The command refuses anything else and exits non-zero, rather than
+let a page it is capturing decide where a file gets written.
+
 What a capture is, and is not:
 
 - **It is a file you commit and re-run**, not something kept in step
