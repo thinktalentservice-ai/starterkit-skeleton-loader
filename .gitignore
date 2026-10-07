@@ -151,3 +151,6 @@ vite.config.ts.timestamp-*
 # Playwright
 test-results
 playwright-report
+
+# Local Claude tooling
+.claude/
