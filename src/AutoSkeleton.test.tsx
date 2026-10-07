@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { act, render, screen } from "@testing-library/react";
+import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { AutoSkeleton } from "./AutoSkeleton";
 import { clearSkeletonCache } from "./cache";
@@ -286,6 +288,141 @@ describe("AutoSkeleton — boneColor", () => {
     for (const bone of skeletons()) {
       expect(getComputedStyle(bone).backgroundColor).toBe("rgb(1, 2, 3)");
     }
+  });
+});
+
+/* From an independent review: each reproduced in a real browser first. */
+describe("AutoSkeleton — the fixture and the children are different things", () => {
+  // Same component type in both slots, as in the README's first example. Its
+  // state and its uncontrolled input are seeded from props on mount.
+  const Stateful = ({ name }: { name: string }) => {
+    const [seeded] = useState(name);
+    const [clicks, setClicks] = useState(0);
+    return (
+      <div data-rect="0,0,300,60">
+        <output>{seeded}</output>
+        <input defaultValue={name} aria-label="name" data-rect="0,0,100,20" />
+        <button type="button" data-rect="0,30,60,20" onClick={() => setClicks((n) => n + 1)}>
+          clicks {clicks}
+        </button>
+      </div>
+    );
+  };
+
+  it("does not hand the fixture's state to the real component", () => {
+    const view = (loading: boolean) => (
+      <AutoSkeleton loading={loading} fixture={<Stateful name="Placeholder" />}>
+        <Stateful name="Real" />
+      </AutoSkeleton>
+    );
+    const { rerender } = render(view(true));
+    rerender(view(false));
+    expect(screen.getByRole("status")).toHaveTextContent("Real");
+    expect(screen.getByLabelText("name")).toHaveValue("Real");
+  });
+
+  it("keeps the children's state across a load, fixture or not", () => {
+    const view = (loading: boolean) => (
+      <AutoSkeleton loading={loading} fixture={<Stateful name="Placeholder" />}>
+        <Stateful name="Real" />
+      </AutoSkeleton>
+    );
+    const { rerender } = render(view(false));
+    act(() => screen.getByRole("button").click());
+    expect(screen.getByRole("button")).toHaveTextContent("clicks 1");
+
+    rerender(view(true));
+    rerender(view(false));
+    expect(screen.getByRole("button")).toHaveTextContent("clicks 1");
+  });
+
+  it("measures only the fixture while both are mounted", () => {
+    render(
+      <AutoSkeleton loading fixture={<img alt="" data-rect="0,0,10,10" />}>
+        <img alt="" data-rect="0,50,99,99" />
+      </AutoSkeleton>,
+    );
+    expect(skeletons().map((el) => el.style.width)).toEqual(["10px"]);
+  });
+});
+
+describe("AutoSkeleton — remembered shapes", () => {
+  it("hydrates cleanly when the shape is already remembered", () => {
+    // The server has no memory; the first client render must not consult it.
+    const markup = (
+      <AutoSkeleton loading name="card">
+        {null}
+      </AutoSkeleton>
+    );
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    // Rendered with nothing remembered, as on a server...
+    host.innerHTML = renderToString(markup);
+    // ...then hydrated in a page where another instance has since learned the shape.
+    render(
+      <AutoSkeleton loading={false} name="card">
+        <Card />
+      </AutoSkeleton>,
+    ).unmount();
+    const mismatches: unknown[] = [];
+    // React reports an attribute mismatch on console.error and a structural
+    // one through onRecoverableError; either is a failed hydration.
+    const logged = vi.spyOn(console, "error").mockImplementation((...args) => {
+      if (/hydrat|did not match|didn't match/i.test(String(args[0]))) mismatches.push(args[0]);
+    });
+    let hydrated: ReturnType<typeof hydrateRoot> | undefined;
+    act(() => {
+      hydrated = hydrateRoot(host, markup, { onRecoverableError: (error) => mismatches.push(error) });
+    });
+    logged.mockRestore();
+    expect(mismatches).toEqual([]);
+    // …and still ends up using it, one commit later.
+    expect(host.querySelectorAll(".MuiSkeleton-root")).toHaveLength(2);
+    act(() => hydrated?.unmount());
+    host.remove();
+  });
+
+  it("does not reuse a shape learned at a different width", () => {
+    // 600px-wide bones in a 200px wrapper would be painted over its neighbours.
+    const clientWidth = vi.spyOn(Element.prototype, "clientWidth", "get");
+    clientWidth.mockReturnValue(600);
+    render(
+      <AutoSkeleton loading={false} name="wide">
+        <Card />
+      </AutoSkeleton>,
+    ).unmount();
+
+    clientWidth.mockReturnValue(200);
+    render(
+      <AutoSkeleton loading name="wide" minHeight={40}>
+        {null}
+      </AutoSkeleton>,
+    );
+    expect(skeletons()).toHaveLength(1);
+    expect(skeletons()[0]?.style.width).toBe("100%");
+  });
+});
+
+describe("AutoSkeleton — content that changes without telling its parent", () => {
+  it("re-measures when something inside the content mutates", async () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    render(
+      <AutoSkeleton loading>
+        <img alt="" data-testid="img" data-rect="0,0,10,10" />
+      </AutoSkeleton>,
+    );
+    expect(skeletons()[0]?.style.width).toBe("10px");
+
+    // A child moving itself in its own effect: no commit of AutoSkeleton, no
+    // change in the wrapper's size.
+    await act(async () => {
+      document.querySelector("[data-testid=img]")?.setAttribute("data-rect", "0,0,64,10");
+      await Promise.resolve();
+    });
+    expect(skeletons()[0]?.style.width).toBe("64px");
   });
 });
 

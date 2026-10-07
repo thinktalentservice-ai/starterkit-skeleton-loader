@@ -196,3 +196,26 @@ bridge; the exact registry pin replaces it after publish.
 
 Build-time CLI and `.bones.json`, a Suspense wrapper, stagger and fade transitions,
 frameworks other than React, npm publish.
+
+## Changes since approval
+
+The design above is what was approved on 2026-10-07. Building it and testing it on
+real template screens changed it in these ways; `README.md` is the current reference.
+
+- **CSS skeleton.** Statically exported HTML showed one block until hydration, which on
+  a slow connection was the only skeleton anyone saw. Until the first measurement the
+  content is now restyled into a skeleton with CSS. Adds `mode` and `boneColor`.
+- **Animations are switched off in hidden content**, so an entrance animation starting at
+  `opacity: 0` does not hide it from the measurement.
+- **Extraction rules.** Table parts are always frames. A small painted box holding at
+  most two pieces is one bone. Bones are cut to the nearest clipping ancestor. A text
+  run containing an image, a control or a `data-skeleton-*` element is walked piece by
+  piece. `url()` backgrounds are not repainted. Closed `<details>` bodies are skipped.
+- **Fixture and children are separate elements**; the children stay mounted, hidden,
+  while a fixture stands in.
+- **The remembered shape** is looked up when measuring rather than during render (the
+  server has no memory, so render-time lookup broke hydration), is only reused at the
+  width it was learned at, and is learned after entrance animations finish.
+- **Coordinates** are divided by the wrapper's transform scale.
+- **Imports** come from the `@mui/material` root; MUI 6 deep imports fail in native
+  Node ESM.

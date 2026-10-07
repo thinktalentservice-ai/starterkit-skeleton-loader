@@ -3,7 +3,11 @@ export type BoneVariant = "text" | "circular" | "rounded" | "rectangular";
 /** Computed paint of a container, copied so its frame survives hiding its content. */
 export type SurfaceStyle = {
   backgroundColor: string;
+  /** Gradients only — a `url()` background is content, and is left out. */
   backgroundImage: string;
+  backgroundSize: string;
+  backgroundPosition: string;
+  backgroundRepeat: string;
   borderTop: string;
   borderRight: string;
   borderBottom: string;

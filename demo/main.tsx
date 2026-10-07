@@ -7,7 +7,9 @@ import { AutoSkeleton } from "../src";
      ?spacer=1    push the cards 1500px down, to measure on a scrolled page
      ?anim=wave   MUI wave animation
      ?mode=css    the CSS-only skeleton, i.e. what server-rendered HTML shows
-                  before JavaScript has measured anything */
+                  before JavaScript has measured anything
+     ?fixture=0   no fixture and no children while loading
+     ?scale=0.5   put the skeleton under a scaling transform */
 
 const params = new URLSearchParams(location.search);
 
@@ -44,6 +46,9 @@ function AccountCard({ account }: { account: Account }) {
         </div>
       </div>
       <img data-testid="image" src={PIXEL} alt="" />
+      <p className="meta" data-testid="meta">
+        Updated today
+      </p>
       <p data-testid="about">{account.about}</p>
       <button type="button" data-testid="action">
         Open account
@@ -55,6 +60,35 @@ function AccountCard({ account }: { account: Account }) {
 function App() {
   const [loading, setLoading] = useState(params.get("loading") !== "0");
   const animation = params.get("anim") === "wave" ? "wave" : "pulse";
+  // ?fixture=0: nothing to measure while loading, as with `{data && <Card />}`.
+  // The skeleton then has only the shape remembered from the last loaded view.
+  const withFixture = params.get("fixture") !== "0";
+  const scale = Number(params.get("scale")) || 1;
+  const skeleton = (
+    <AutoSkeleton
+      loading={loading}
+      name="accounts"
+      animation={animation}
+      mode={params.get("mode") === "css" ? "css" : "measure"}
+      className="grid"
+      minHeight={withFixture ? undefined : 120}
+      fixture={
+        withFixture ? (
+          <>
+            <AccountCard account={PLACEHOLDER} />
+            <AccountCard account={PLACEHOLDER} />
+          </>
+        ) : undefined
+      }
+    >
+      {withFixture || !loading ? (
+        <>
+          <AccountCard account={REAL} />
+          <AccountCard account={REAL} />
+        </>
+      ) : null}
+    </AutoSkeleton>
+  );
   return (
     <>
       <div className="toolbar">
@@ -63,22 +97,12 @@ function App() {
         </button>
       </div>
       {params.get("spacer") === "1" && <div className="spacer" />}
-      <AutoSkeleton
-        loading={loading}
-        name="accounts"
-        animation={animation}
-        mode={params.get("mode") === "css" ? "css" : "measure"}
-        className="grid"
-        fixture={
-          <>
-            <AccountCard account={PLACEHOLDER} />
-            <AccountCard account={PLACEHOLDER} />
-          </>
-        }
-      >
-        <AccountCard account={REAL} />
-        <AccountCard account={REAL} />
-      </AutoSkeleton>
+      {/* ?scale=0.5: an ancestor transform, as under MUI's Grow / Popover. */}
+      {scale === 1 ? (
+        skeleton
+      ) : (
+        <div style={{ transform: `scale(${scale})`, transformOrigin: "0 0", width: 900 }}>{skeleton}</div>
+      )}
     </>
   );
 }

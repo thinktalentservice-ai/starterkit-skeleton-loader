@@ -281,6 +281,112 @@ describe("extractBones — coordinates", () => {
   });
 });
 
+/* From an independent review of the branch: each of these was reproduced in a
+   real browser before it was fixed. */
+describe("extractBones — things inside a run of text", () => {
+  const circle = ["top-left", "top-right", "bottom-right", "bottom-left"]
+    .map((corner) => `border-${corner}-radius:50%`)
+    .join(";");
+
+  it("gives an inline image its own bone instead of swallowing it into the text bar", () => {
+    // <img> computes to display:inline, so "avatar + name" looked like one run.
+    const root = mount(`
+      <div data-rect="0,0,300,40" data-lines="48,10,80,20">
+        <img data-rect="0,0,40,40" style="${circle}" /> Jane Doe
+      </div>`);
+    const bones = extractBones(root);
+    expect(bones.map((b) => b.variant)).toEqual(["circular", "text"]);
+    expect(geometry(bones[1])).toEqual({ x: 48, y: 10, width: 80, height: 20 });
+  });
+
+  it("honours data-skeleton-ignore on an inline child", () => {
+    const root = mount(`
+      <p data-rect="0,0,400,20" data-lines="0,0,47,20">
+        Name <span data-skeleton-ignore data-rect="50,0,350,20" data-lines="50,0,350,20">a long aside</span>
+      </p>`);
+    expect(extractBones(root).map(geometry)).toEqual([{ x: 0, y: 0, width: 47, height: 20 }]);
+  });
+
+  it("honours data-skeleton-variant on a text element", () => {
+    const root = mount(
+      `<p data-skeleton-variant="rounded" data-rect="0,0,200,40" data-lines="0,0,120,20">Heading</p>`,
+    );
+    const bones = extractBones(root);
+    expect(bones).toHaveLength(1);
+    expect(bones[0]).toMatchObject({ variant: "rounded", width: 200, height: 40 });
+  });
+});
+
+describe("extractBones — what is not really there", () => {
+  it("skips the body of a closed <details>", () => {
+    const root = mount(`
+      <details data-rect="0,0,300,20">
+        <summary data-rect="0,0,300,20" data-lines="0,0,60,20">More</summary>
+        <p data-rect="0,20,300,20" data-lines="0,20,140,20">Hidden body</p>
+      </details>`);
+    expect(extractBones(root).map(geometry)).toEqual([{ x: 0, y: 0, width: 60, height: 20 }]);
+  });
+
+  it("measures the body of an open <details>", () => {
+    const root = mount(`
+      <details open data-rect="0,0,300,40">
+        <summary data-rect="0,0,300,20" data-lines="0,0,60,20">More</summary>
+        <p data-rect="0,20,300,20" data-lines="0,20,140,20">Shown body</p>
+      </details>`);
+    expect(extractBones(root)).toHaveLength(2);
+  });
+
+  it("does not measure another skeleton's own bones", () => {
+    // A nested AutoSkeleton's overlay sits inside the outer one's content.
+    const root = mount(`
+      <img data-rect="0,0,40,40" />
+      <div data-auto-skeleton-overlay data-rect="0,0,300,200">
+        <span data-rect="0,50,200,20" style="background-color:rgb(200, 200, 200)"></span>
+      </div>`);
+    expect(extractBones(root).map(geometry)).toEqual([{ x: 0, y: 0, width: 40, height: 40 }]);
+  });
+});
+
+describe("extractBones — a scaled wrapper", () => {
+  it("reports local pixels when an ancestor transform scales the wrapper", () => {
+    // Laid out 400px wide, drawn 200px wide: transform: scale(0.5) above it.
+    // Bones are positioned inside that same transform, so they need the
+    // unscaled numbers.
+    const root = mount(`<img data-rect="10,20,50,25" />`, 'data-rect="0,0,200,150"');
+    Object.defineProperty(root, "offsetWidth", { value: 400 });
+    Object.defineProperty(root, "offsetHeight", { value: 300 });
+    expect(extractBones(root).map(geometry)).toEqual([{ x: 20, y: 40, width: 100, height: 50 }]);
+  });
+});
+
+describe("extractBones — background images on frames", () => {
+  it("keeps a gradient with its size, position and repeat", () => {
+    const root = mount(`
+      <div data-rect="0,0,300,200" style="background-image:linear-gradient(red, blue);background-size:cover;background-repeat:no-repeat">
+        <img data-rect="0,0,10,10" />
+      </div>`);
+    const surface = extractBones(root)[0]?.surface;
+    expect(surface?.backgroundImage).toContain("linear-gradient");
+    expect(surface?.backgroundSize).toBe("cover");
+    expect(surface?.backgroundRepeat).toBe("no-repeat");
+  });
+
+  it("does not repaint a photo: a url() background is left out of the frame", () => {
+    const root = mount(`
+      <div data-rect="0,0,300,200" style="background-image:url(photo.jpg);background-color:rgb(10, 20, 30)">
+        <img data-rect="0,0,10,10" />
+      </div>`);
+    const surface = extractBones(root)[0]?.surface;
+    expect(surface?.backgroundImage).toBe("");
+    expect(surface?.backgroundColor).toBe("rgb(10, 20, 30)");
+  });
+
+  it("still turns a childless photo box into a bone", () => {
+    const root = mount(`<div data-rect="0,0,300,200" style="background-image:url(photo.jpg)"></div>`);
+    expect(extractBones(root).map((b) => b.kind)).toEqual(["bone"]);
+  });
+});
+
 /* Found on real screens (a MUI data table and a form page), not on the demo
    card: rules that were right for a card turned table cells into solid blocks
    and repainted avatars and slider thumbs in full colour. */
@@ -416,6 +522,40 @@ describe("extractBones — clipping", () => {
     ]);
     expect(bones[0]?.clip).toBeUndefined();
     expect(bones[1]?.clip).toEqual({ x: 0, y: 0, width: 200, height: 100, radius: "" });
+  });
+
+  it("does not clip an absolutely positioned child that escapes a static clipper", () => {
+    // The child's containing block is the outer relative box, so the inner
+    // overflow:hidden does not apply to it — on the page it is fully visible.
+    const root = mount(`
+      <div data-rect="0,0,400,400" style="position:relative">
+        <div data-rect="0,0,400,30" style="overflow:hidden">
+          <img data-rect="20,200,80,40" style="position:absolute" />
+        </div>
+      </div>`);
+    const bones = extractBones(root);
+    expect(bones.map(geometry)).toEqual([{ x: 20, y: 200, width: 80, height: 40 }]);
+    expect(bones[0]?.clip).toBeUndefined();
+  });
+
+  it("still clips an absolutely positioned child when the clipper is its containing block", () => {
+    const root = mount(`
+      <div data-rect="0,0,400,30" style="overflow:hidden;position:relative">
+        <img data-rect="20,200,80,40" style="position:absolute" />
+      </div>`);
+    expect(extractBones(root)).toEqual([]);
+  });
+
+  it("resolves a percentage radius against the clipper, not the bone", () => {
+    // inset(... round 50%) would be 50% of the bone's own box.
+    const circle = ["top-left", "top-right", "bottom-right", "bottom-left"]
+      .map((corner) => `border-${corner}-radius:50%`)
+      .join(";");
+    const root = mount(`
+      <div data-rect="0,0,200,200" style="overflow:hidden;${circle}">
+        <img data-rect="0,0,200,60" /><img data-rect="0,70,10,10" /><img data-rect="20,70,10,10" />
+      </div>`);
+    expect(extractBones(root)[0]?.clip).toEqual({ x: 0, y: 0, width: 200, height: 200, radius: "100px" });
   });
 
   it("leaves children of an overflow:visible parent alone", () => {

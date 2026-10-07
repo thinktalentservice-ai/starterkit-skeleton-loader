@@ -91,12 +91,18 @@ the very first load.
 
 For a list, render the fixture as many times as you expect rows.
 
+The fixture and the children are separate instances, even when they are the
+same component. The children stay mounted while the fixture stands in for them
+(hidden with `display: none`), so their state survives a reload — and their
+effects run during loading, as they would without the wrapper.
+
 **Children that already render** — if the component draws its layout before its
 data arrives, no fixture is needed.
 
 **A `name`** — the shape of the loaded content is remembered for the page
-session. The first load has nothing to go on; every later one (a refetch, coming
-back to the route) gets the real shape.
+session, once its entrance animations have finished. The first load has nothing
+to go on; a later one (a refetch, coming back to the route) gets the real shape,
+provided the wrapper is the same width it was learned at.
 
 ```tsx
 <AutoSkeleton loading={isLoading} name="invoice-table" minHeight={240}>
@@ -141,6 +147,8 @@ The CSS skeleton is an approximation of the measured one:
   own colour. Add `data-skeleton-leaf` to make it a bone.
 - Text mixed with non-inline children (`<div>Label <svg/></div>`) gets no bar
   for the loose text.
+- Text inside an `inline-block`, `inline-flex` or floated child of a paragraph
+  gets no bar.
 - `boneSx` does not reach it; use `boneColor`.
 - It needs `:has()` — every current browser, none before 2023.
 
@@ -179,6 +187,17 @@ rounded `overflow: hidden` card gets the card's corners.
 - **Text bones follow the fixture's text.** A longer placeholder name gives a
   wider bar. Choose placeholder copy of typical length.
 - **Shadow DOM and `<iframe>` contents** are not walked; an iframe is one bone.
+- **A descendant with its own `visibility: visible`** shows through the measured
+  skeleton, because the content is hidden with an inherited `visibility: hidden`.
+- **Scaled ancestors are handled, rotated or skewed ones are not.** Bones are
+  axis-aligned boxes.
+- **Focus is not managed.** If focus is inside the content when `loading` turns
+  true, it falls back to `<body>`; move it yourself if that matters.
+- **Nothing announces the loading state.** The wrapper sets `aria-busy`; add your
+  own live region if a screen-reader announcement is needed.
+- **`mode="css"` cannot fall back to the block** when the content renders
+  elements with nothing drawable in them (an empty `<ul>`): it never measures,
+  so it cannot tell.
 
 ## Lower-level API
 

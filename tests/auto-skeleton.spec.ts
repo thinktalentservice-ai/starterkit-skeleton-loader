@@ -43,7 +43,7 @@ function readLayout(page: Page): Promise<Layout> {
     const elements: Record<string, Box[]> = {};
     for (const id of ids) {
       elements[id] = Array.from(
-        document.querySelectorAll(`[data-auto-skeleton-content] [data-testid="${id}"]`),
+        document.querySelectorAll(`[data-auto-skeleton-shown] [data-testid="${id}"]`),
       ).map(actual);
     }
     return {
@@ -145,7 +145,7 @@ test("a bone inside an overflow:hidden card is cut to the card's rounded corners
   // card (1px border, 16px radius, overflow hidden) is what rounds it.
   await page.goto("/");
   const banner = await page.evaluate(() => {
-    const el = document.querySelector('[data-auto-skeleton-content] [data-testid="banner"]');
+    const el = document.querySelector('[data-auto-skeleton-shown] [data-testid="banner"]');
     const overlay = document.querySelector("[data-auto-skeleton-overlay]");
     if (!el || !overlay) return null;
     const rect = el.getBoundingClientRect();
@@ -172,6 +172,64 @@ test("a frame's shadow is not cut off at the wrapper's edge", async ({ page }) =
     .first()
     .evaluate((el) => getComputedStyle(el).boxShadow);
   expect(shadow).not.toBe("none");
+});
+
+test("bones land on their elements under a scaling transform", async ({ page }) => {
+  // getBoundingClientRect() is in viewport pixels; bones are positioned in the
+  // wrapper's own. Under scale(0.5) the two differ by a factor of two, and a
+  // transform never resizes anything, so nothing would re-measure.
+  await page.goto("/?scale=0.5");
+  const gaps = await page.evaluate(() => {
+    const overlay = document.querySelector("[data-auto-skeleton-overlay]");
+    // Shape bones carry no transform of their own, so their drawn rect is comparable.
+    const bones = Array.from(overlay?.querySelectorAll(".MuiSkeleton-root:not(.MuiSkeleton-text)") ?? []).map((el) =>
+      el.getBoundingClientRect(),
+    );
+    return ["avatar", "image", "action"].map((id) => {
+      const rect = document.querySelector(`[data-auto-skeleton-shown] [data-testid="${id}"]`)?.getBoundingClientRect();
+      if (!rect) return Infinity;
+      return Math.min(
+        ...bones.map((bone) =>
+          Math.max(
+            Math.abs(bone.left - rect.left),
+            Math.abs(bone.top - rect.top),
+            Math.abs(bone.width - rect.width),
+            Math.abs(bone.height - rect.height),
+          ),
+        ),
+      );
+    });
+  });
+  for (const gap of gaps) expect(gap).toBeLessThanOrEqual(1);
+});
+
+test("the shape of loaded content is learned after its entrance animation, and reused", async ({ page }) => {
+  // No fixture and nothing rendered while loading: the first load has only the
+  // block. The cards then fade up over 0.6s — a shape read on the commit that
+  // ended loading would catch them at opacity 0 and remember nothing.
+  await page.goto("/?fixture=0");
+  await expect(page.locator("[data-auto-skeleton-surface]")).toHaveCount(0);
+  await expect(page.locator(".MuiSkeleton-root")).toHaveCount(1);
+
+  await page.getByTestId("toggle").click();
+  await expect(page.getByText("Ada Lovelace").first()).toBeVisible();
+  const resting = await page.getByTestId("card").first().evaluate(async (el) => {
+    await Promise.all(el.getAnimations().map((animation) => animation.finished));
+    const rect = el.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  });
+
+  await page.getByTestId("toggle").click();
+  const surfaces = page.locator("[data-auto-skeleton-surface]");
+  await expect(surfaces).toHaveCount(2);
+  const remembered = await surfaces.first().evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  });
+  // Where the card came to rest, not 18px below it mid-slide.
+  expect(Math.abs(remembered.top - resting.top)).toBeLessThanOrEqual(1);
+  expect(Math.abs(remembered.left - resting.left)).toBeLessThanOrEqual(1);
+  expect(Math.abs(remembered.height - resting.height)).toBeLessThanOrEqual(1);
 });
 
 test("bones follow the layout when the viewport is resized", async ({ page }) => {
@@ -209,7 +267,8 @@ test("hidden content cannot be focused or clicked while loading", async ({ page 
 test("loading ends: the overlay goes and the real content shows", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".MuiSkeleton-root").first()).toBeVisible();
-  await expect(page.getByText("Ada Lovelace")).toHaveCount(0);
+  // The real cards stay mounted through the load, but are not shown.
+  await expect(page.getByText("Ada Lovelace").first()).toBeHidden();
 
   await page.getByTestId("toggle").click();
   await expect(page.locator("[data-auto-skeleton-overlay]")).toHaveCount(0);
@@ -227,7 +286,7 @@ test("loading ends: the overlay goes and the real content shows", async ({ page 
 test.describe("CSS skeleton (before any measurement)", () => {
   const read = (page: Page, id: string) =>
     page
-      .locator(`[data-auto-skeleton-content] [data-testid="${id}"]`)
+      .locator(`[data-auto-skeleton-shown] [data-testid="${id}"]`)
       .first()
       .evaluate((el) => {
         const style = getComputedStyle(el);
@@ -278,6 +337,14 @@ test.describe("CSS skeleton (before any measurement)", () => {
     const card = await read(page, "card");
     expect(card.background).toBe("rgb(255, 255, 255)");
     expect(card.visibility).toBe("visible");
+
+    // .meta sets -webkit-text-fill-color, which outranks `color`: with only
+    // `color` made transparent its words would still be readable.
+    const fill = await page
+      .locator('[data-auto-skeleton-shown] [data-testid="meta"]')
+      .first()
+      .evaluate((el) => getComputedStyle(el).webkitTextFillColor);
+    expect(fill).toBe(transparent);
 
     // Nothing measured, so nothing is drawn on top.
     await expect(page.locator("[data-auto-skeleton-overlay]")).toBeHidden();

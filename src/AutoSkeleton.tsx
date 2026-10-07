@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, version } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import Box from "@mui/material/Box";
-import Skeleton from "@mui/material/Skeleton";
-import { alpha, keyframes } from "@mui/material/styles";
-import type { SxProps, Theme } from "@mui/material/styles";
+// From the package root, not `@mui/material/Box`: MUI 6 has no `exports` map,
+// so a deep import is a directory import, which native Node ESM refuses.
+import { Box, Skeleton, alpha, keyframes } from "@mui/material";
+import type { SxProps, Theme } from "@mui/material";
 import { getSnapshot, setSnapshot } from "./cache";
 import { extractBones } from "./extract";
-import type { Bone, BoneClip, SurfaceStyle } from "./types";
+import type { Bone, BoneClip, SkeletonSnapshot, SurfaceStyle } from "./types";
 
 export type AutoSkeletonProps = {
   /** Show the skeleton instead of the content. */
   loading: boolean;
-  /** The real content. */
+  /**
+   * The real content. It stays mounted while loading — hidden when a `fixture`
+   * stands in for it — so it keeps its state across a load.
+   */
   children?: ReactNode;
   /**
    * Content to shape the skeleton from while loading — the real component fed
@@ -43,10 +46,13 @@ export type AutoSkeletonProps = {
   className?: string;
 };
 
+/** One measurement: what was found, and the remembered shape to fall back on. */
+type Measured = { bones: Bone[]; snapshot: SkeletonSnapshot | null };
+
 // useLayoutEffect warns during server rendering; nothing can be measured there anyway.
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
-const sameBones = (a: Bone[] | null, b: Bone[]) => a === b || JSON.stringify(a) === JSON.stringify(b);
+const sameBones = (a: Bone[], b: Bone[]) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
 // React 19 made `inert` a boolean prop and reads the `inert=""` spelling as
 // false; React 18 only understands that spelling. A prop rather than an effect,
@@ -125,13 +131,20 @@ const pulse = keyframes`
 function cssSkeleton(animated: boolean) {
   const animation = animated ? `${pulse} 2s ease-in-out 0.5s infinite !important` : "none !important";
   return {
-    [`${CSS_MODE}, ${CSS_MODE} *`]: {
+    // Pseudo-elements are listed because `*` does not match them, and an icon
+    // font or a required-field asterisk usually sets its own colour.
+    // -webkit-text-fill-color outranks `color`; MUI sets it on disabled inputs.
+    [`${CSS_MODE}, ${CSS_MODE} *, ${CSS_MODE} *::before, ${CSS_MODE} *::after`]: {
       color: "transparent !important",
+      WebkitTextFillColor: "transparent !important",
       textShadow: "none !important",
       pointerEvents: "none !important",
       userSelect: "none",
     },
-    [`${CSS_MODE} ::placeholder`]: { color: "transparent !important" },
+    [`${CSS_MODE} ::placeholder`]: {
+      color: "transparent !important",
+      WebkitTextFillColor: "transparent !important",
+    },
     [`${CSS_MODE} ${TEXT}`]: {
       textDecorationLine: "line-through !important",
       textDecorationStyle: "solid !important",
@@ -141,7 +154,9 @@ function cssSkeleton(animated: boolean) {
       animation,
     },
     // The strike on a run already covers its inline children; a second one on
-    // top would darken wherever the bone colour is translucent.
+    // top would darken wherever the bone colour is translucent. The cost: a
+    // child that is inline-block, inline-flex or floated is outside the
+    // parent's strike and gets no bar until the measured skeleton takes over.
     [`${CSS_MODE} ${TEXT} :is(${PHRASING})`]: {
       textDecorationLine: "none !important",
       animation: "none !important",
@@ -159,7 +174,9 @@ function cssSkeleton(animated: boolean) {
       visibility: "hidden !important",
     },
     // With content to restyle, the block fallback in the overlay is not needed.
-    [`${CSS_MODE}:not(:empty) + [data-auto-skeleton-overlay]`]: { display: "none" },
+    [`${CSS_MODE}:has(> [data-auto-skeleton-shown]:not(:empty)) + [data-auto-skeleton-overlay]`]: {
+      display: "none",
+    },
   };
 }
 
@@ -208,6 +225,16 @@ function clipPath(bone: Bone, clip: BoneClip): string {
   return `inset(${inset}${clip.radius ? ` round ${clip.radius}` : ""})`;
 }
 
+/** Resolves once nothing under `root` is still animating towards an end. */
+function whenSettled(root: Element): Promise<unknown> | null {
+  const running = (root.getAnimations?.({ subtree: true }) ?? []).filter((animation) => {
+    // A spinner never finishes; waiting on it would mean never learning.
+    const end = animation.effect?.getComputedTiming().endTime;
+    return animation.playState !== "finished" && Number.isFinite(Number(end));
+  });
+  return running.length > 0 ? Promise.allSettled(running.map((animation) => animation.finished)) : null;
+}
+
 /**
  * Shows a skeleton shaped like the content it wraps.
  *
@@ -232,8 +259,12 @@ export function AutoSkeleton({
   const rootRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   // null = not measured yet, which is the state server-rendered HTML is in.
-  const [measured, setMeasured] = useState<Bone[] | null>(null);
+  // The remembered shape is looked up when measuring, never during render: the
+  // server has no memory, so a first client render that consulted it would not
+  // match the HTML it is hydrating.
+  const [measured, setMeasured] = useState<Measured | null>(null);
   const measures = mode === "measure";
+  const standIn = loading && fixture !== undefined && fixture !== null;
 
   /** Reads the current shape and remembers it under `name`. */
   const read = useCallback((): Bone[] => {
@@ -248,9 +279,16 @@ export function AutoSkeleton({
   }, [name]);
 
   const measure = useCallback(() => {
-    const next = read();
-    setMeasured((previous) => (sameBones(previous, next) ? previous : next));
-  }, [read]);
+    const bones = read();
+    const remembered = bones.length === 0 && name ? getSnapshot(name) : undefined;
+    // Bones are in pixels. A shape learned at another width would be painted
+    // past this wrapper's edge, over whatever sits beside it.
+    const fits = remembered && Math.abs(remembered.width - (rootRef.current?.clientWidth ?? 0)) <= 1;
+    const snapshot = remembered && fits ? remembered : null;
+    setMeasured((previous) =>
+      previous && sameBones(previous.bones, bones) && previous.snapshot === snapshot ? previous : { bones, snapshot },
+    );
+  }, [read, name]);
 
   // No dependency list on purpose. Content can change shape on any commit
   // without the wrapper resizing; `measure` only sets state when bones differ,
@@ -259,7 +297,7 @@ export function AutoSkeleton({
     if (loading && measures) measure();
   });
 
-  // Layout changes that arrive without a React commit.
+  // Layout changes that arrive without a commit of this component.
   useEffect(() => {
     const root = rootRef.current;
     const content = contentRef.current;
@@ -273,8 +311,12 @@ export function AutoSkeleton({
       frame = requestAnimationFrame(measure);
     };
 
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
-    observer?.observe(root);
+    const resizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    resizes?.observe(root);
+    // A child re-rendering on its own, or moving itself in an effect, changes
+    // the shape without resizing the wrapper or re-rendering this component.
+    const mutations = typeof MutationObserver === "undefined" ? null : new MutationObserver(schedule);
+    mutations?.observe(content, { subtree: true, childList: true, attributes: true, characterData: true });
     window.addEventListener("resize", schedule);
     // `load` does not bubble; capture catches images sizing themselves late.
     content.addEventListener("load", schedule, true);
@@ -283,7 +325,8 @@ export function AutoSkeleton({
 
     return () => {
       active = false;
-      observer?.disconnect();
+      resizes?.disconnect();
+      mutations?.disconnect();
       window.removeEventListener("resize", schedule);
       content.removeEventListener("load", schedule, true);
       cancelAnimationFrame(frame);
@@ -291,15 +334,31 @@ export function AutoSkeleton({
   }, [loading, measures, measure]);
 
   // Learn the loaded shape so a later load with nothing to measure can use it.
+  // Not on the commit that ends loading: entrance animations are back on by
+  // then, and content caught at `opacity: 0` or mid-slide would be remembered
+  // as empty, or in the wrong place.
   useEffect(() => {
-    if (!loading && measures && name) read();
+    const root = rootRef.current;
+    if (loading || !measures || !name || !root) return;
+    const settled = whenSettled(root);
+    if (!settled) {
+      read();
+      return;
+    }
+    let active = true;
+    void settled.then(() => {
+      if (active) read();
+    });
+    return () => {
+      active = false;
+    };
   }, [loading, measures, name, read]);
 
-  const hasMeasured = measures && measured !== null && measured.length > 0;
-  const snapshot = loading && measures && !hasMeasured && name ? getSnapshot(name) : undefined;
-  const bones = hasMeasured ? measured : (snapshot?.bones ?? []);
-  // Nothing measured and nothing remembered: restyle the content itself.
-  const cssSkeletonOn = loading && (!measures || (measured === null && !snapshot));
+  const found = loading && measures ? measured : null;
+  const snapshot = found && found.bones.length === 0 ? found.snapshot : null;
+  const bones = found ? (snapshot?.bones ?? found.bones) : [];
+  // Nothing measured yet: restyle the content itself.
+  const cssSkeletonOn = loading && (!measures || measured === null);
   const measuredBoneSx = [
     boneColor ? { bgcolor: boneColor } : null,
     ...(Array.isArray(boneSx) ? boneSx : [boneSx]),
@@ -317,13 +376,15 @@ export function AutoSkeleton({
           minHeight: snapshot?.height ?? minHeight,
           "--auto-skeleton-bone": boneColor ?? muiBoneColor(theme),
         }),
-        SETTLE_HIDDEN_CONTENT,
-        cssSkeleton(animation !== false),
+        // Only while loading: `:has()` rules cost style recalculation on every
+        // DOM change underneath, which loaded content should not pay for.
+        loading ? SETTLE_HIDDEN_CONTENT : null,
+        loading ? cssSkeleton(animation !== false) : null,
         ...(Array.isArray(sx) ? sx : [sx]),
       ]}
     >
-      {/* Always present, so children keep their state when `loading` flips.
-          `display: contents` keeps them laid out as direct children of the wrapper. */}
+      {/* `display: contents` throughout, so whatever is shown is laid out as a
+          direct child of the wrapper. */}
       <div
         ref={contentRef}
         data-auto-skeleton-content=""
@@ -332,7 +393,22 @@ export function AutoSkeleton({
         {...(loading ? INERT : null)}
         style={{ display: "contents", visibility: loading && !cssSkeletonOn ? "hidden" : undefined }}
       >
-        {loading ? (fixture ?? children) : children}
+        {/* Separate elements with separate keys: in one slot, a fixture and
+            children of the same component type would be one React instance,
+            and the real component would inherit the placeholder's state. */}
+        {standIn && (
+          <div key="fixture" data-auto-skeleton-shown="" style={{ display: "contents" }}>
+            {fixture}
+          </div>
+        )}
+        {/* Always mounted, so the children keep their state across a load. */}
+        <div
+          key="children"
+          data-auto-skeleton-shown={standIn ? undefined : ""}
+          style={{ display: standIn ? "none" : "contents" }}
+        >
+          {children}
+        </div>
       </div>
       {loading && (
         <div data-auto-skeleton-overlay="" aria-hidden style={OVERLAY_STYLE}>
