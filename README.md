@@ -60,6 +60,15 @@ The wrapper is one `position: relative` element. Your content is laid out as its
 direct children, so `className="grid"` or `sx={{ display: "flex" }}` on
 `AutoSkeleton` behaves as if you had put it on a plain `<div>`.
 
+One exception: CSS child selectors do not see through it. Bootstrap's
+`.row > *` gutters are the usual case — wrap the row, do not replace it:
+
+```tsx
+<AutoSkeleton loading={isLoading} fixture={<Row>{placeholders}</Row>}>
+  <Row>{cards}</Row>
+</AutoSkeleton>
+```
+
 ## Giving it something to measure
 
 A skeleton can only be shaped like content that exists. Pick whichever fits:
@@ -120,6 +129,11 @@ frame.
 
 ## Things to know
 
+- **Animations are off while content is hidden.** An entrance animation that
+  starts at `opacity: 0` would otherwise hide the content from the measurement.
+  They run normally once loading ends.
+- **`opacity: 0` content gets no bone.** Add `data-skeleton-leaf` to its
+  container if you want one there, e.g. around an image that fades in on load.
 - **The fixture really renders.** Its effects run and its images load. Feed it
   static placeholder data, not a component that fetches.
 - **`visibility: hidden` in your own content is not skipped.** That is how the

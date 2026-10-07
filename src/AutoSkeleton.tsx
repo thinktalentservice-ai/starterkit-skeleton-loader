@@ -40,11 +40,27 @@ const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : us
 
 const sameBones = (a: Bone[], b: Bone[]) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
+// margin/padding are reset because the overlay is a child of the wrapper, and
+// host rules like Bootstrap's `.row > *` would otherwise pad it.
 const OVERLAY_STYLE: CSSProperties = {
   position: "absolute",
   inset: 0,
+  margin: 0,
+  padding: 0,
   overflow: "hidden",
   pointerEvents: "none",
+};
+
+// Entrance animations usually start at `opacity: 0` and offset by a transform,
+// so a measurement taken on the first frame finds nothing, or finds it in the
+// wrong place. Nobody can see hidden content animate; switching animation off
+// puts it in its resting layout immediately.
+const HIDDEN = '& > [data-auto-skeleton-content][aria-hidden="true"]';
+const SETTLE_HIDDEN_CONTENT = {
+  [`${HIDDEN} *, ${HIDDEN} *::before, ${HIDDEN} *::after`]: {
+    animation: "none !important",
+    transition: "none !important",
+  },
 };
 
 const BLOCK_STYLE: CSSProperties = { position: "absolute", inset: 0, width: "100%", height: "100%" };
@@ -168,6 +184,7 @@ export function AutoSkeleton({
       aria-busy={loading || undefined}
       sx={[
         { position: "relative", minHeight: snapshot?.height ?? minHeight },
+        SETTLE_HIDDEN_CONTENT,
         ...(Array.isArray(sx) ? sx : [sx]),
       ]}
     >

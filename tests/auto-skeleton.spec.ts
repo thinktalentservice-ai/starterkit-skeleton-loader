@@ -93,6 +93,21 @@ test("every shape gets a bone on top of it, within a pixel", async ({ page }) =>
   expect(actionBone?.radius).toBe("10px");
 });
 
+test("content with an entrance animation is measured where it comes to rest", async ({ page }) => {
+  // demo cards fade up from opacity 0 over 0.6s. Read on the first frame: a
+  // measurement that waited for, or ran during, the animation would be empty
+  // or 18px off.
+  await page.goto("/");
+  const layout = await readLayout(page);
+  expect(layout.surfaces).toHaveLength(2);
+  expect(misaligned(layout)).toEqual([]);
+
+  // And the animation is given back once the content is shown for real.
+  await page.getByTestId("toggle").click();
+  const animated = await page.getByTestId("card").first().evaluate((el) => getComputedStyle(el).animationName);
+  expect(animated).toBe("fade-up");
+});
+
 test("a wrapped paragraph gets one text bone per rendered line", async ({ page }) => {
   await page.setViewportSize({ width: 420, height: 900 });
   await page.goto("/");
