@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AutoSkeleton } from "../src";
+import type { CapturedSkeleton } from "../src";
+// Written by `pnpm capture:demo` (bin/auto-skeleton.mjs) with the demo running.
+import accountsBones from "./accounts.bones.json";
 
 /* Browser harness for tests/auto-skeleton.spec.ts, and a page to look at.
      ?loading=0   start loaded
@@ -9,6 +12,7 @@ import { AutoSkeleton } from "../src";
      ?mode=css    the CSS-only skeleton, i.e. what server-rendered HTML shows
                   before JavaScript has measured anything
      ?fixture=0   no fixture and no children while loading
+     ?captured=1  with ?fixture=0: show the shape captured in accounts.bones.json
      ?scale=0.5   put the skeleton under a scaling transform */
 
 const params = new URLSearchParams(location.search);
@@ -71,6 +75,7 @@ function App() {
       animation={animation}
       mode={params.get("mode") === "css" ? "css" : "measure"}
       className="grid"
+      captured={params.get("captured") === "1" ? (accountsBones as CapturedSkeleton) : undefined}
       minHeight={withFixture ? undefined : 120}
       fixture={
         withFixture ? (

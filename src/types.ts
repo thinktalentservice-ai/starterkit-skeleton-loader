@@ -26,7 +26,8 @@ export type Bone = {
   height: number;
   /** Computed border-radius, "" when there is none. */
   radius: string;
-  surface?: SurfaceStyle;
+  /** A measured frame has every property; a captured one only those it draws. */
+  surface?: Partial<SurfaceStyle>;
   /** Set when an ancestor with `overflow` other than `visible` cuts this bone off. */
   clip?: BoneClip;
 };
@@ -39,6 +40,16 @@ export type BoneClip = {
   height: number;
   /** Radius of the clipping area, "" when its corners are square. */
   radius: string;
+};
+
+/**
+ * Shapes captured ahead of time by the `auto-skeleton` command, one per viewport
+ * width. Import the `.bones.json` it writes and pass it as `captured`.
+ */
+export type CapturedSkeleton = {
+  name?: string;
+  /** Keyed by the viewport width, in px, the shape was captured at. */
+  breakpoints: Record<string, SkeletonSnapshot>;
 };
 
 export type SkeletonSnapshot = {

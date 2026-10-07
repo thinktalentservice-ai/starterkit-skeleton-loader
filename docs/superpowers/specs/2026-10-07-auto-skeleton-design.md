@@ -219,3 +219,8 @@ real template screens changed it in these ways; `README.md` is the current refer
 - **Coordinates** are divided by the wrapper's transform scale.
 - **Imports** come from the `@mui/material` root; MUI 6 deep imports fail in native
   Node ESM.
+- **Captured shapes (the hybrid option).** Build-time capture was out of scope above; it
+  is in now. Content that only exists after JavaScript has run leaves nothing in the HTML
+  to measure or restyle, so a static export showed an empty space. `bin/auto-skeleton.mjs`
+  captures named skeletons with Playwright into `<name>.bones.json`, and the `captured`
+  prop draws them — fluid in width, chosen per viewport by media query, theme-neutral.

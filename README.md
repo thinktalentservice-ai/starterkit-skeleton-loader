@@ -13,8 +13,10 @@ import { AutoSkeleton } from "@devopsnext/starterkit-skeleton-loader";
 ```
 
 The idea comes from [boneyard](https://github.com/0xGF/boneyard). This package
-is React-only and measures in the browser instead of at build time, so there is
-no CLI, no generated files, and nothing to go stale.
+is React-only and measures in the browser first, so most screens need no build
+step and nothing that can go stale. For content that only exists after
+JavaScript has run it can also do what boneyard does — capture the shape with a
+command and ship it in the HTML.
 
 ## Install
 
@@ -55,7 +57,8 @@ a breakpoint list.
 | `loading` | `boolean` | required | Show the skeleton. |
 | `children` | `ReactNode` | | The real content. |
 | `fixture` | `ReactNode` | | Content to measure while loading. |
-| `name` | `string` | | Remembers the last measured shape under this key. |
+| `name` | `string` | | Remembers the last measured shape under this key; also how the capture command finds the wrapper. |
+| `captured` | `CapturedSkeleton` | | A shape captured ahead of time — the imported `.bones.json`. |
 | `mode` | `"measure" \| "css"` | `"measure"` | `"css"` stays on the CSS skeleton and never measures. |
 | `animation` | `"pulse" \| "wave" \| false` | `"pulse"` | Passed to MUI `<Skeleton>`. The CSS skeleton pulses unless `false`. |
 | `minHeight` | `number \| string` | | Reserves space for an empty wrapper. |
@@ -110,8 +113,32 @@ provided the wrapper is the same width it was learned at.
 </AutoSkeleton>
 ```
 
+**A captured shape** — for content that does not exist until JavaScript has run
+(a table built from the live theme, a chart, anything behind `useEffect`). There
+is nothing in the HTML to measure or restyle, so on a slow connection the page
+is empty until the bundle arrives. Capture the shape once and ship it:
+
+```tsx
+import tableBones from "@/skeletons/orders.bones.json";
+
+<AutoSkeleton loading={!ready} name="orders" captured={tableBones}>
+  {ready ? <OrdersTable /> : null}
+</AutoSkeleton>
+```
+
+```bash
+pnpm auto-skeleton --url http://localhost:3000/orders --out src/skeletons
+```
+
+The command opens the page at each viewport width, finds every
+`<AutoSkeleton name="…">` that has finished loading, measures it, and writes
+`<name>.bones.json`. See [Capturing](#capturing).
+
 If none of these apply, a single rounded block fills the wrapper — give it a
 `minHeight`, because an empty wrapper is zero pixels tall.
+
+When more than one applies, the most exact wins: a measurement, then a shape
+remembered under `name`, then a captured one, then the block.
 
 ## Steering the result
 
@@ -153,6 +180,42 @@ The CSS skeleton is an approximation of the measured one:
 - It needs `:has()` — every current browser, none before 2023.
 
 Set `mode="css"` to use it everywhere and skip measuring altogether.
+
+## Capturing
+
+```
+auto-skeleton --url <url> [--url <url> …] [options]
+
+  --out <dir>            Where to write <name>.bones.json   (default: src/skeletons)
+  --breakpoints <list>   Viewport widths, comma separated   (default: 375,768,1280)
+  --name <name>          Only capture this skeleton; repeatable
+  --wait <ms>            Extra time to wait after load      (default: 1000)
+  --max-height <px>      Capture no further down than this  (default: 1200)
+  --color-scheme <s>     light | dark | no-preference
+  --storage-state <file> Playwright storage state, for pages behind a login
+```
+
+It needs Playwright (`playwright` or `@playwright/test`) in the project that
+runs it, and the app running. Each wrapper needs a `name` and must be showing
+its real content when the page settles; one still loading is reported, not
+silently skipped.
+
+What a capture is, and is not:
+
+- **It is a file you commit and re-run**, not something kept in step
+  automatically. After a layout change the old capture is a slightly wrong
+  placeholder until the command is run again.
+- **It stretches.** Horizontal positions are a share of the captured width, so
+  a capture taken in a 992px wrapper fills a 1160px one. Circles keep their
+  size. Which capture shows is chosen by media query: the widest breakpoint not
+  wider than the viewport.
+- **It reserves its height** while the wrapper is otherwise empty, so the page
+  does not jump when the real content arrives.
+- **It carries no colours.** Frames are redrawn as outlines in the bone colour,
+  so one capture serves light and dark themes.
+- **It costs bytes.** Every breakpoint is in the HTML. A card is a few hundred
+  bytes; a dense data table can be tens of kilobytes — lower `--max-height` to
+  capture only what is above the fold.
 
 ## What becomes what
 
@@ -215,7 +278,8 @@ clearSkeletonCache();                                    // forget every `name`
 pnpm install
 pnpm verify          # typecheck + unit tests + build
 pnpm test:browser    # Playwright against demo/, real layout
-pnpm demo            # http://localhost:5179  (?loading=0, ?anim=wave, ?spacer=1)
+pnpm demo            # http://localhost:5179  (?loading=0, ?mode=css, ?fixture=0&captured=1, …)
+pnpm capture:demo    # with the demo running: rewrite demo/accounts.bones.json
 ```
 
 Unit tests run in jsdom, which has no layout engine, so they check the

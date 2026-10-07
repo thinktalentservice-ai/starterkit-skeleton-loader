@@ -4,6 +4,7 @@ import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { AutoSkeleton } from "./AutoSkeleton";
 import { clearSkeletonCache } from "./cache";
+import type { CapturedSkeleton, SurfaceStyle } from "./types";
 
 /* Same convention as extract.test.ts: jsdom cannot lay anything out, so
    geometry is declared as data-rect / data-lines and the layout reads are
@@ -288,6 +289,117 @@ describe("AutoSkeleton — boneColor", () => {
     for (const bone of skeletons()) {
       expect(getComputedStyle(bone).backgroundColor).toBe("rgb(1, 2, 3)");
     }
+  });
+});
+
+/* Content that only exists once JavaScript has run — a table built from the
+   live theme, say — leaves nothing in server HTML to measure or restyle. A
+   shape captured ahead of time is the only thing that can be shown there. */
+describe("AutoSkeleton — captured shapes", () => {
+  const frame: SurfaceStyle = {
+    backgroundColor: "",
+    backgroundImage: "",
+    backgroundSize: "",
+    backgroundPosition: "",
+    backgroundRepeat: "",
+    borderTop: "1px solid var(--auto-skeleton-bone)",
+    borderRight: "1px solid var(--auto-skeleton-bone)",
+    borderBottom: "1px solid var(--auto-skeleton-bone)",
+    borderLeft: "1px solid var(--auto-skeleton-bone)",
+    boxShadow: "",
+  };
+  const captured: CapturedSkeleton = {
+    name: "table",
+    breakpoints: {
+      "375": {
+        width: 300,
+        height: 200,
+        bones: [{ kind: "bone", variant: "rounded", x: 30, y: 10, width: 150, height: 40, radius: "8px" }],
+      },
+      "1280": {
+        width: 1000,
+        height: 400,
+        bones: [
+          { kind: "surface", variant: "rectangular", x: 0, y: 0, width: 1000, height: 400, radius: "12px", surface: frame },
+          { kind: "bone", variant: "circular", x: 100, y: 20, width: 40, height: 40, radius: "50%" },
+          { kind: "bone", variant: "text", x: 200, y: 30, width: 500, height: 20, radius: "" },
+        ],
+      },
+    },
+  };
+
+  const serverHtml = () => {
+    const html = renderToString(
+      <AutoSkeleton loading name="table" captured={captured}>
+        {null}
+      </AutoSkeleton>,
+    );
+    return new DOMParser().parseFromString(html, "text/html");
+  };
+
+  it("ships one layer of bones per captured width in server HTML", () => {
+    const layers = serverHtml().querySelectorAll("[data-auto-skeleton-captured]");
+    expect(Array.from(layers).map((layer) => layer.getAttribute("data-auto-skeleton-captured"))).toEqual([
+      "375",
+      "1280",
+    ]);
+    expect(layers[0]?.querySelectorAll(".MuiSkeleton-root")).toHaveLength(1);
+    expect(layers[1]?.querySelectorAll(".MuiSkeleton-root")).toHaveLength(2);
+    expect(layers[1]?.querySelectorAll("[data-auto-skeleton-surface]")).toHaveLength(1);
+  });
+
+  it("places captured bones as a share of the width, so they stretch with the wrapper", () => {
+    // Captured in a 1000px wrapper; the real one may be any width.
+    const text = serverHtml().querySelector<HTMLElement>('[data-auto-skeleton-captured="1280"] .MuiSkeleton-text');
+    expect(text?.style.left).toBe("20%");
+    expect(text?.style.width).toBe("50%");
+    expect(text?.style.top).toBe("30px");
+    expect(text?.style.height).toBe("20px");
+  });
+
+  it("keeps a captured circle round instead of stretching it", () => {
+    const circle = serverHtml().querySelector<HTMLElement>(".MuiSkeleton-circular");
+    expect(circle?.style.left).toBe("10%");
+    expect(circle?.style.width).toBe("40px");
+  });
+
+  it("is still what shows after mount when nothing can be measured", () => {
+    render(
+      <AutoSkeleton loading name="table" captured={captured}>
+        {null}
+      </AutoSkeleton>,
+    );
+    expect(document.querySelectorAll("[data-auto-skeleton-captured]")).toHaveLength(2);
+    expect(skeletons().some((bone) => bone.style.width === "100%")).toBe(false);
+  });
+
+  it("gives way to a real measurement", () => {
+    render(
+      <AutoSkeleton loading name="table" captured={captured}>
+        <Card />
+      </AutoSkeleton>,
+    );
+    expect(document.querySelectorAll("[data-auto-skeleton-captured]")).toHaveLength(0);
+    expect(skeletons()).toHaveLength(2);
+  });
+
+  it("falls back to the block when the capture is empty", () => {
+    render(
+      <AutoSkeleton loading captured={{ breakpoints: {} }} minHeight={80}>
+        {null}
+      </AutoSkeleton>,
+    );
+    expect(skeletons()).toHaveLength(1);
+    expect(skeletons()[0]?.style.width).toBe("100%");
+  });
+
+  it("names the wrapper so the capture command can find it", () => {
+    render(
+      <AutoSkeleton loading={false} name="table">
+        <Card />
+      </AutoSkeleton>,
+    );
+    expect(root()).toHaveAttribute("data-auto-skeleton-name", "table");
   });
 });
 

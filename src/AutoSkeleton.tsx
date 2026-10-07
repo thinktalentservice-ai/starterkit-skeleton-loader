@@ -6,7 +6,7 @@ import { Box, Skeleton, alpha, keyframes } from "@mui/material";
 import type { SxProps, Theme } from "@mui/material";
 import { getSnapshot, setSnapshot } from "./cache";
 import { extractBones } from "./extract";
-import type { Bone, BoneClip, SkeletonSnapshot, SurfaceStyle } from "./types";
+import type { Bone, BoneClip, CapturedSkeleton, SkeletonSnapshot, SurfaceStyle } from "./types";
 
 export type AutoSkeletonProps = {
   /** Show the skeleton instead of the content. */
@@ -27,6 +27,14 @@ export type AutoSkeletonProps = {
    * it and reused when a later load has nothing to measure.
    */
   name?: string;
+  /**
+   * A shape captured ahead of time by the `auto-skeleton` command — the
+   * imported `.bones.json`. Shown whenever there is nothing to measure or
+   * restyle, which for content that only exists once JavaScript has run is the
+   * whole time before hydration. Needs `name`, which is how the command finds
+   * the wrapper.
+   */
+  captured?: CapturedSkeleton;
   /**
    * `"measure"` (default) draws MUI `<Skeleton>` bones at measured positions;
    * until the first measurement — in server-rendered HTML, before hydration —
@@ -225,6 +233,57 @@ function clipPath(bone: Bone, clip: BoneClip): string {
   return `inset(${inset}${clip.radius ? ` round ${clip.radius}` : ""})`;
 }
 
+/* ── Captured shapes ───────────────────────────────────────────────────────
+   A capture is in the pixels of the wrapper it was taken in, and at render
+   time — in server HTML above all — the real wrapper's width is unknown. So
+   horizontal positions become a share of the captured width and stretch with
+   the wrapper; vertical ones stay in pixels. Which capture applies is decided
+   by media queries, because nothing else can decide it before JavaScript. */
+
+type Layer = readonly [viewport: number, snapshot: SkeletonSnapshot];
+
+function capturedLayers(captured: CapturedSkeleton | undefined): Layer[] {
+  return Object.entries(captured?.breakpoints ?? {})
+    .map(([viewport, snapshot]) => [Number(viewport), snapshot] as const)
+    .filter(([viewport, snapshot]) => Number.isFinite(viewport) && snapshot.width > 0 && snapshot.bones.length > 0)
+    .sort((a, b) => a[0] - b[0]);
+}
+
+const NOTHING_TO_SHOW = "&:not(:has(> [data-auto-skeleton-content] > [data-auto-skeleton-shown]:not(:empty)))";
+
+/** Shows the layer captured at the widest viewport not wider than the current one. */
+function capturedRules(layers: Layer[]) {
+  const layer = (viewport: number) => `& > [data-auto-skeleton-overlay] > [data-auto-skeleton-captured="${viewport}"]`;
+  const hidden = Object.fromEntries(layers.map(([viewport]) => [layer(viewport), { display: "none" }]));
+  const shown = layers.map(([viewport, snapshot], index) => {
+    const next = layers[index + 1]?.[0];
+    const range = [
+      // The narrowest capture also covers everything narrower than it.
+      index === 0 ? null : `(min-width: ${viewport}px)`,
+      next === undefined ? null : `(max-width: ${next - 0.02}px)`,
+    ].filter(Boolean);
+    const rules = {
+      [layer(viewport)]: { display: "block" },
+      // Reserve the captured height while the wrapper is otherwise empty, so
+      // the page does not jump when the real content arrives.
+      [NOTHING_TO_SHOW]: { minHeight: snapshot.height },
+    };
+    return range.length > 0 ? { [`@media ${range.join(" and ")}`]: rules } : rules;
+  });
+  return [hidden, ...shown];
+}
+
+function capturedStyle(bone: Bone, width: number): CSSProperties {
+  const share = (value: number) => `${Math.round((value / width) * 10000) / 100}%`;
+  // No clip: its insets are pixels of the captured width too, and what a clip
+  // would have dropped was already left out when the shape was captured.
+  const style = boneStyle({ ...bone, clip: undefined });
+  style.left = share(bone.x);
+  // A circle stretched sideways is an ellipse; avatars keep their size.
+  if (!(bone.kind === "bone" && bone.variant === "circular")) style.width = share(bone.width);
+  return style;
+}
+
 /** Resolves once nothing under `root` is still animating towards an end. */
 function whenSettled(root: Element): Promise<unknown> | null {
   const running = (root.getAnimations?.({ subtree: true }) ?? []).filter((animation) => {
@@ -248,6 +307,7 @@ export function AutoSkeleton({
   children,
   fixture,
   name,
+  captured,
   mode = "measure",
   animation = "pulse",
   minHeight,
@@ -363,12 +423,15 @@ export function AutoSkeleton({
     boneColor ? { bgcolor: boneColor } : null,
     ...(Array.isArray(boneSx) ? boneSx : [boneSx]),
   ];
+  // Last resort before the plain block: nothing measured, nothing remembered.
+  const layers = loading && bones.length === 0 ? capturedLayers(captured) : [];
 
   return (
     <Box
       ref={rootRef}
       className={className}
       data-auto-skeleton=""
+      data-auto-skeleton-name={name}
       aria-busy={loading || undefined}
       sx={[
         (theme) => ({
@@ -380,6 +443,7 @@ export function AutoSkeleton({
         // DOM change underneath, which loaded content should not pay for.
         loading ? SETTLE_HIDDEN_CONTENT : null,
         loading ? cssSkeleton(animation !== false) : null,
+        ...capturedRules(layers),
         ...(Array.isArray(sx) ? sx : [sx]),
       ]}
     >
@@ -412,7 +476,25 @@ export function AutoSkeleton({
       </div>
       {loading && (
         <div data-auto-skeleton-overlay="" aria-hidden style={OVERLAY_STYLE}>
-          {bones.length === 0 ? (
+          {layers.length > 0 ? (
+            layers.map(([viewport, snapshot]) => (
+              <div key={viewport} data-auto-skeleton-captured={viewport}>
+                {snapshot.bones.map((bone, index) =>
+                  bone.kind === "surface" ? (
+                    <div key={index} data-auto-skeleton-surface="" style={capturedStyle(bone, snapshot.width)} />
+                  ) : (
+                    <Skeleton
+                      key={index}
+                      variant={bone.variant}
+                      animation={animation}
+                      sx={measuredBoneSx}
+                      style={capturedStyle(bone, snapshot.width)}
+                    />
+                  ),
+                )}
+              </div>
+            ))
+          ) : bones.length === 0 ? (
             <Skeleton variant="rounded" animation={animation} sx={measuredBoneSx} style={BLOCK_STYLE} />
           ) : (
             bones.map((bone, index) =>

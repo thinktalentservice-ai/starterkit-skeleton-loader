@@ -7,11 +7,15 @@
   "sideEffects": false,
   "files": [
     "dist",
+    "bin",
     "README.md"
   ],
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "auto-skeleton": "./bin/auto-skeleton.mjs"
+  },
   "exports": {
     ".": {
       "import": {
@@ -29,7 +33,7 @@
     "url": "git+https://github.com/thinktalentservice-ai/starterkit-skeleton-loader.git"
   },
   "scripts": {
-    "build": "tsc --noEmit && tsup",
+    "build": "tsc --noEmit && node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
     "dev": "tsup --watch",
     "demo": "vite",
     "typecheck": "tsc --noEmit",
@@ -37,7 +41,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:browser": "playwright test",
-    "verify": "pnpm typecheck && pnpm typecheck:browser && pnpm test && pnpm build"
+    "verify": "pnpm typecheck && pnpm typecheck:browser && pnpm test && pnpm build",
+    "capture:demo": "node bin/auto-skeleton.mjs --url http://localhost:5179/?loading=0 --out demo"
   },
   "peerDependencies": {
     "@mui/material": ">=6",
