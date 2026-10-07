@@ -1,7 +1,7 @@
 {
   "name": "@devopsnext/starterkit-skeleton-loader",
   "version": "0.1.0",
-  "description": "Auto skeleton loader for React \u2014 measures the real UI at runtime and draws MUI Skeleton bones over it.",
+  "description": "Auto skeleton loader for React — measures the real UI at runtime and draws MUI Skeleton bones over it.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
@@ -14,7 +14,7 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "auto-skeleton": "./bin/auto-skeleton.mjs"
+    "auto-skeleton": "bin/auto-skeleton.mjs"
   },
   "exports": {
     ".": {
@@ -77,5 +77,8 @@
     "loading",
     "mui",
     "design-system"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }
