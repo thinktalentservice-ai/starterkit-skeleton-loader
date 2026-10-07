@@ -1,2 +1,5 @@
 # Committed Storybook output for branch-based GitHub Pages.
 docs/** -text -diff linguist-generated=true
+
+# A CRLF shebang breaks the CLI on Unix; pnpm refuses to pack it.
+bin/** text eol=lf

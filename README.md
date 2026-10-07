@@ -1,5 +1,9 @@
 # @devopsnext/starterkit-skeleton-loader
 
+[![npm](https://img.shields.io/npm/v/@devopsnext/starterkit-skeleton-loader)](https://www.npmjs.com/package/@devopsnext/starterkit-skeleton-loader)
+[![CI](https://github.com/thinktalentservice-ai/starterkit-skeleton-loader/actions/workflows/ci.yml/badge.svg)](https://github.com/thinktalentservice-ai/starterkit-skeleton-loader/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/@devopsnext/starterkit-skeleton-loader)](./LICENSE)
+
 Auto skeleton loader for React. Wrap a component, and while it loads you get a
 skeleton shaped like the real thing — measured from the DOM at runtime and drawn
 with MUI's `<Skeleton>`. No hand-written placeholders to keep in sync.
@@ -20,13 +24,30 @@ command and ship it in the HTML.
 
 ## Install
 
+Published on npm as
+[`@devopsnext/starterkit-skeleton-loader`](https://www.npmjs.com/package/@devopsnext/starterkit-skeleton-loader).
+
+```bash
+npm install @devopsnext/starterkit-skeleton-loader
+```
+
 ```bash
 pnpm add @devopsnext/starterkit-skeleton-loader
 ```
 
+```bash
+yarn add @devopsnext/starterkit-skeleton-loader
+```
+
 Peer dependencies: `react >=18`, `react-dom >=18`, `@mui/material >=6` (and the
-Emotion packages MUI itself needs). The package ships no CSS; bone colour,
-animation and dark mode come from your MUI theme.
+Emotion packages MUI itself needs). In an app that does not use MUI yet:
+
+```bash
+npm install @mui/material @emotion/react @emotion/styled
+```
+
+The package ships no CSS; bone colour, animation and dark mode come from your
+MUI theme. It is ESM and CommonJS, with types for both.
 
 ## How it works
 
@@ -127,7 +148,7 @@ import tableBones from "@/skeletons/orders.bones.json";
 ```
 
 ```bash
-pnpm auto-skeleton --url http://localhost:3000/orders --out src/skeletons
+npx auto-skeleton --url http://localhost:3000/orders --out src/skeletons
 ```
 
 The command opens the page at each viewport width, finds every
@@ -195,8 +216,10 @@ auto-skeleton --url <url> [--url <url> …] [options]
   --storage-state <file> Playwright storage state, for pages behind a login
 ```
 
-It needs Playwright (`playwright` or `@playwright/test`) in the project that
-runs it, and the app running. Each wrapper needs a `name` and must be showing
+The command is installed with the package: run it as `npx auto-skeleton`,
+`pnpm auto-skeleton` or `yarn auto-skeleton`. It needs Playwright (`playwright`
+or `@playwright/test`) in the project that runs it — the package does not
+depend on it — and the app running. Each wrapper needs a `name` and must be showing
 its real content when the page settles; one still loading is reported, not
 silently skipped.
 
@@ -290,14 +313,34 @@ Unit tests run in jsdom, which has no layout engine, so they check the
 extraction rules against declared geometry. Whether a bone lands on its element
 is checked in a real browser by the specs in `tests/`.
 
-To try a build in an app, pack it — do not `link:` it, which gives the app a
-second copy of React and of MUI's theme context:
+To try an unpublished build in an app, pack it — do not `link:` it, which gives
+the app a second copy of React and of MUI's theme context:
 
 ```bash
 pnpm build && pnpm pack
 # in the app
-pnpm add ../starterkit-skeleton-loader/devopsnext-starterkit-skeleton-loader-0.1.0.tgz
+pnpm add ../starterkit-skeleton-loader/devopsnext-starterkit-skeleton-loader-<version>.tgz
 ```
+
+## Releasing
+
+Releases are published to npm by hand; CI only verifies. `dist/` is not
+committed and nothing builds it on publish, so build first:
+
+```bash
+pnpm verify                       # typecheck + unit tests + build
+pnpm test:browser
+npm version patch                 # or minor / major; commits and tags
+pnpm publish                      # public, per publishConfig
+git push --follow-tags
+```
+
+`pnpm publish` refuses to run from a dirty tree or off `main`. Check what goes
+into the tarball beforehand with `pnpm pack --dry-run` — it should be `dist/`,
+`bin/`, `README.md`, `LICENSE` and `package.json`.
+
+The README on npmjs.com is the one in the published tarball; an edit here shows
+up there with the next version.
 
 ## License
 
