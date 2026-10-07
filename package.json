@@ -1,0 +1,81 @@
+{
+  "name": "@devopsnext/starterkit-skeleton-loader",
+  "version": "0.1.0",
+  "description": "Auto skeleton loader for React \u2014 measures the real UI at runtime and draws MUI Skeleton bones over it.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "bin",
+    "README.md"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "auto-skeleton": "./bin/auto-skeleton.mjs"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thinktalentservice-ai/starterkit-skeleton-loader.git"
+  },
+  "scripts": {
+    "build": "tsc --noEmit && node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
+    "dev": "tsup --watch",
+    "demo": "vite",
+    "typecheck": "tsc --noEmit",
+    "typecheck:browser": "tsc --noEmit -p tsconfig.playwright.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:browser": "playwright test",
+    "verify": "pnpm typecheck && pnpm typecheck:browser && pnpm test && pnpm build",
+    "capture:demo": "node bin/auto-skeleton.mjs --url http://localhost:5179/?loading=0 --out demo"
+  },
+  "peerDependencies": {
+    "@mui/material": ">=6",
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/material": "^9.0.1",
+    "@playwright/test": "1.62.1",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "jsdom": "^26.1.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.2",
+    "vite": "^8.1.5",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "react",
+    "skeleton",
+    "loading",
+    "mui",
+    "design-system"
+  ]
+}
