@@ -186,3 +186,83 @@ test("loading ends: the overlay goes and the real content shows", async ({ page 
   await page.getByTestId("toggle").click();
   await expect.poll(async () => misaligned(await readLayout(page))).toEqual([]);
 });
+
+/* The CSS skeleton is what a statically exported page shows until its
+   JavaScript has run — on a slow connection, for seconds. It restyles the
+   content itself, so these specs read the content elements directly. */
+test.describe("CSS skeleton (before any measurement)", () => {
+  const read = (page: Page, id: string) =>
+    page
+      .locator(`[data-auto-skeleton-content] [data-testid="${id}"]`)
+      .first()
+      .evaluate((el) => {
+        const style = getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return {
+          color: style.color,
+          background: style.backgroundColor,
+          strike: style.textDecorationLine,
+          strikeColor: style.textDecorationColor,
+          strikePx: parseFloat(style.textDecorationThickness),
+          fontPx: parseFloat(style.fontSize),
+          visibility: style.visibility,
+          box: [rect.left, rect.top, rect.width, rect.height].map(Math.round),
+        };
+      });
+
+  const boneColor = (page: Page) =>
+    page.locator("[data-auto-skeleton]").evaluate((el) => {
+      // Resolve the custom property to the rgb() form computed styles report.
+      const probe = document.createElement("i");
+      probe.style.backgroundColor = "var(--auto-skeleton-bone)";
+      el.appendChild(probe);
+      const resolved = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return resolved;
+    });
+
+  test("draws text as bars, shapes as fills, and keeps the card frame", async ({ page }) => {
+    await page.goto("/?mode=css");
+    const bone = await boneColor(page);
+    const transparent = "rgba(0, 0, 0, 0)";
+
+    const title = await read(page, "title");
+    expect(title.color).toBe(transparent);
+    expect(title.strike).toBe("line-through");
+    expect(title.strikeColor).toBe(bone);
+    expect(title.strikePx / title.fontPx).toBeCloseTo(0.7, 1);
+
+    const about = await read(page, "about");
+    expect(about.strike).toBe("line-through");
+
+    for (const id of ["action", "image"]) {
+      const shape = await read(page, id);
+      expect(shape.background).toBe(bone);
+      expect(shape.color).toBe(transparent);
+    }
+
+    const card = await read(page, "card");
+    expect(card.background).toBe("rgb(255, 255, 255)");
+    expect(card.visibility).toBe("visible");
+
+    // Nothing measured, so nothing is drawn on top.
+    await expect(page.locator("[data-auto-skeleton-overlay]")).toBeHidden();
+    await expect(page.locator("[data-auto-skeleton-surface]")).toHaveCount(0);
+  });
+
+  test("does not move anything: same boxes as the measured skeleton", async ({ page }) => {
+    await page.goto("/?mode=css");
+    const css = await Promise.all(IDS.map((id) => read(page, id)));
+    await page.goto("/");
+    const measured = await Promise.all(IDS.map((id) => read(page, id)));
+    expect(css.map((el) => el.box)).toEqual(measured.map((el) => el.box));
+  });
+
+  test("the content still cannot be focused", async ({ page }) => {
+    await page.goto("/?mode=css");
+    await page.getByTestId("toggle").focus();
+    await page.keyboard.press("Tab");
+    const focused = await page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? null);
+    expect(focused).not.toBe("action");
+  });
+});

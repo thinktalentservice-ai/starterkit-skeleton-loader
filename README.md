@@ -31,13 +31,18 @@ animation and dark mode come from your MUI theme.
 While `loading` is true:
 
 1. The content (`fixture`, or `children` if there is no fixture) is rendered
-   **hidden and inert** — `visibility: hidden`, `inert`, `aria-hidden`. It still
-   takes up its real space.
-2. Its DOM is walked and turned into a flat list of bones: text becomes one bar
-   per rendered line, images / buttons / inputs / avatars become one shape each,
-   and a container that paints something (a card's background, border, shadow)
-   has its frame repainted as-is.
-3. The bones are drawn in an overlay on top, each a MUI `<Skeleton>`.
+   **inert** — `inert`, `aria-hidden`. It still takes up its real space.
+2. **Before any JavaScript has measured** — in server-rendered or statically
+   exported HTML, until hydration — the content itself is restyled into a
+   skeleton with CSS: colours go transparent, text is struck through with a
+   bone-thick line that follows each rendered line, and images, controls and
+   `data-skeleton-leaf` boxes are filled bone-colour. Card frames stay as they
+   are. Nothing in this step changes layout.
+3. **Once it can measure**, the content is hidden and its DOM is walked into a
+   flat list of bones: text becomes one bar per rendered line, images / buttons
+   / inputs / avatars become one shape each, and a container that paints
+   something (a card's background, border, shadow) has its frame repainted.
+4. The bones are drawn in an overlay on top, each a MUI `<Skeleton>`.
 
 It re-measures when the wrapper resizes, when the window resizes, when an image
 inside finishes loading, and when web fonts arrive — so it is responsive without
@@ -51,9 +56,11 @@ a breakpoint list.
 | `children` | `ReactNode` | | The real content. |
 | `fixture` | `ReactNode` | | Content to measure while loading. |
 | `name` | `string` | | Remembers the last measured shape under this key. |
-| `animation` | `"pulse" \| "wave" \| false` | `"pulse"` | Passed to MUI `<Skeleton>`. |
+| `mode` | `"measure" \| "css"` | `"measure"` | `"css"` stays on the CSS skeleton and never measures. |
+| `animation` | `"pulse" \| "wave" \| false` | `"pulse"` | Passed to MUI `<Skeleton>`. The CSS skeleton pulses unless `false`. |
 | `minHeight` | `number \| string` | | Reserves space for an empty wrapper. |
-| `boneSx` | `SxProps<Theme>` | | Applied to every bone. |
+| `boneColor` | `string` | MUI's | Bone colour for both skeletons, e.g. `"var(--surface-elevated)"`. |
+| `boneSx` | `SxProps<Theme>` | | Applied to every measured bone only. |
 | `sx`, `className` | | | Applied to the wrapper. |
 
 The wrapper is one `position: relative` element. Your content is laid out as its
@@ -113,7 +120,7 @@ Put these attributes on elements inside the content:
 To recolour the bones with a design token:
 
 ```tsx
-<AutoSkeleton loading boneSx={{ bgcolor: "var(--surface-elevated)" }}>…</AutoSkeleton>
+<AutoSkeleton loading boneColor="var(--surface-elevated)">…</AutoSkeleton>
 ```
 
 ## Next.js and static export
@@ -121,11 +128,23 @@ To recolour the bones with a design token:
 The package is a client component (`"use client"` is in the build). It works
 with `output: "export"` — nothing runs on a server.
 
-One limit follows from measuring in the browser: layout does not exist at build
-time, so prerendered HTML carries the single-block fallback, and the detailed
-bones appear on hydration. Loading states that start on the client — a query
-after mount, a route change, a refetch — get detailed bones in their first
-frame.
+Layout does not exist at build time, so prerendered HTML cannot carry measured
+bones. It carries the content instead, restyled by the CSS skeleton — which is
+what a visitor on a slow connection looks at until the JavaScript arrives. This
+matters most for pages whose loading state ends at hydration (data read from
+`localStorage` in an effect, say): there the CSS skeleton is the only one
+anybody sees.
+
+The CSS skeleton is an approximation of the measured one:
+
+- A painted box with no children (an avatar `<div>` with a background) keeps its
+  own colour. Add `data-skeleton-leaf` to make it a bone.
+- Text mixed with non-inline children (`<div>Label <svg/></div>`) gets no bar
+  for the loose text.
+- `boneSx` does not reach it; use `boneColor`.
+- It needs `:has()` — every current browser, none before 2023.
+
+Set `mode="css"` to use it everywhere and skip measuring altogether.
 
 ## Things to know
 

@@ -5,7 +5,9 @@ import { AutoSkeleton } from "../src";
 /* Browser harness for tests/auto-skeleton.spec.ts, and a page to look at.
      ?loading=0   start loaded
      ?spacer=1    push the cards 1500px down, to measure on a scrolled page
-     ?anim=wave   MUI wave animation */
+     ?anim=wave   MUI wave animation
+     ?mode=css    the CSS-only skeleton, i.e. what server-rendered HTML shows
+                  before JavaScript has measured anything */
 
 const params = new URLSearchParams(location.search);
 
@@ -64,6 +66,7 @@ function App() {
         loading={loading}
         name="accounts"
         animation={animation}
+        mode={params.get("mode") === "css" ? "css" : "measure"}
         className="grid"
         fixture={
           <>

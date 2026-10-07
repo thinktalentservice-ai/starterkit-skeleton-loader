@@ -1,4 +1,5 @@
 import { act, render, screen } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
 import { AutoSkeleton } from "./AutoSkeleton";
 import { clearSkeletonCache } from "./cache";
 
@@ -201,6 +202,90 @@ describe("AutoSkeleton — nothing to measure", () => {
     );
     expect(skeletons()).toHaveLength(1);
     expect(skeletons()[0]?.style.width).toBe("100%");
+  });
+});
+
+describe("AutoSkeleton — before anything is measured", () => {
+  // renderToString runs no effects: this is the markup a static export ships,
+  // and what is on screen until hydration.
+  const shipped = () => {
+    const html = renderToString(
+      <AutoSkeleton loading fixture={<Card title="Placeholder" />}>
+        {null}
+      </AutoSkeleton>,
+    );
+    const parsed = new DOMParser().parseFromString(html, "text/html");
+    return parsed.querySelector<HTMLElement>("[data-auto-skeleton-content]");
+  };
+
+  it("ships the content visible and flagged for the CSS skeleton, not hidden behind a block", () => {
+    const element = shipped();
+    expect(element?.hasAttribute("data-auto-skeleton-css")).toBe(true);
+    expect(element?.style.visibility).toBe("");
+    expect(element?.textContent).toContain("Placeholder");
+  });
+
+  it("ships the content inert and hidden from assistive tech", () => {
+    const element = shipped();
+    expect(element?.hasAttribute("inert")).toBe(true);
+    expect(element?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("hands over to measured bones once it can measure", () => {
+    render(
+      <AutoSkeleton loading>
+        <Card />
+      </AutoSkeleton>,
+    );
+    expect(content()).not.toHaveAttribute("data-auto-skeleton-css");
+    expect(content().style.visibility).toBe("hidden");
+    expect(skeletons()).toHaveLength(2);
+  });
+});
+
+describe('AutoSkeleton — mode="css"', () => {
+  it("stays on the CSS skeleton and never measures", () => {
+    const rects = vi.spyOn(Element.prototype, "getBoundingClientRect");
+    render(
+      <AutoSkeleton loading mode="css">
+        <Card />
+      </AutoSkeleton>,
+    );
+    expect(content()).toHaveAttribute("data-auto-skeleton-css");
+    expect(content().style.visibility).toBe("");
+    expect(content()).toHaveAttribute("inert");
+    expect(document.querySelector("[data-auto-skeleton-surface]")).toBeNull();
+    expect(rects).not.toHaveBeenCalled();
+  });
+
+  it("drops the flag when loading ends", () => {
+    const { rerender } = render(
+      <AutoSkeleton loading mode="css">
+        <Card />
+      </AutoSkeleton>,
+    );
+    rerender(
+      <AutoSkeleton loading={false} mode="css">
+        <Card />
+      </AutoSkeleton>,
+    );
+    expect(content()).not.toHaveAttribute("data-auto-skeleton-css");
+    expect(content()).not.toHaveAttribute("inert");
+    expect(screen.getByText("Title")).toBeVisible();
+  });
+});
+
+describe("AutoSkeleton — boneColor", () => {
+  it("colours measured bones and publishes the colour for the CSS skeleton", () => {
+    render(
+      <AutoSkeleton loading boneColor="rgb(1, 2, 3)">
+        <Card />
+      </AutoSkeleton>,
+    );
+    expect(getComputedStyle(root()).getPropertyValue("--auto-skeleton-bone")).toBe("rgb(1, 2, 3)");
+    for (const bone of skeletons()) {
+      expect(getComputedStyle(bone).backgroundColor).toBe("rgb(1, 2, 3)");
+    }
   });
 });
 
