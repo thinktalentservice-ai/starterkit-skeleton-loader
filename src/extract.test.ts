@@ -280,3 +280,149 @@ describe("extractBones — coordinates", () => {
     expect(extractBones(root).map(geometry)).toEqual([{ x: 0, y: 0, width: 100, height: 20 }]);
   });
 });
+
+/* Found on real screens (a MUI data table and a form page), not on the demo
+   card: rules that were right for a card turned table cells into solid blocks
+   and repainted avatars and slider thumbs in full colour. */
+describe("extractBones — text in a box that is only outlined", () => {
+  it("keeps the words as lines when the box has a border but no fill", () => {
+    const root = mount(
+      `<h3 data-rect="0,0,300,30" data-lines="0,4,120,20" style="border-bottom:1px solid rgb(0, 0, 0)">Section</h3>`,
+    );
+    const bones = extractBones(root);
+    expect(bones.map((b) => `${b.kind}:${b.variant}`)).toEqual(["surface:rectangular", "bone:text"]);
+    expect(geometry(bones[1])).toEqual({ x: 0, y: 4, width: 120, height: 20 });
+  });
+});
+
+describe("extractBones — tables", () => {
+  const cell = "border-bottom:1px solid rgb(200, 200, 200);background-color:rgb(255, 255, 255)";
+
+  it("draws a filled cell's text as lines over its frame, never as one block", () => {
+    const root = mount(`
+      <table data-rect="0,0,400,40"><tbody data-rect="0,0,400,40"><tr data-rect="0,0,400,40">
+        <td data-rect="0,0,200,40" data-lines="16,10,120,20" style="${cell}">ada@example.com</td>
+      </tr></tbody></table>`);
+    const bones = extractBones(root);
+    expect(bones.map((b) => `${b.kind}:${b.variant}`)).toEqual(["surface:rectangular", "bone:text"]);
+    expect(geometry(bones[1])).toEqual({ x: 16, y: 10, width: 120, height: 20 });
+  });
+
+  it("repaints an empty filled cell as a frame, not a bone", () => {
+    const root = mount(`
+      <table data-rect="0,0,400,40"><tbody data-rect="0,0,400,40"><tr data-rect="0,0,400,40">
+        <th data-rect="0,0,120,40" style="${cell}"></th>
+      </tr></tbody></table>`);
+    expect(extractBones(root).map((b) => b.kind)).toEqual(["surface"]);
+  });
+
+  it("does not collapse a small filled cell into a bone", () => {
+    const root = mount(`
+      <table data-rect="0,0,400,40"><tbody data-rect="0,0,400,40"><tr data-rect="0,0,400,40">
+        <td data-rect="0,0,60,40" style="${cell}"><img data-rect="10,8,24,24" /></td>
+      </tr></tbody></table>`);
+    expect(extractBones(root).map((b) => b.kind)).toEqual(["surface", "bone"]);
+  });
+});
+
+describe("extractBones — small painted containers", () => {
+  const round = ["top-left", "top-right", "bottom-right", "bottom-left"]
+    .map((corner) => `border-${corner}-radius:50%`)
+    .join(";");
+  const fill = "background-color:rgb(30, 60, 200)";
+
+  it("turns a small filled container into one bone instead of repainting its colour", () => {
+    // An avatar wrapping an <img>, a slider thumb wrapping its <input>.
+    const root = mount(
+      `<div data-rect="0,0,40,40" style="${fill};${round}"><img data-rect="0,0,40,40" /></div>`,
+    );
+    const bones = extractBones(root);
+    expect(bones).toHaveLength(1);
+    expect(bones[0]).toMatchObject({ kind: "bone", variant: "circular", x: 0, y: 0, width: 40, height: 40 });
+  });
+
+  it("does the same for a chip holding an icon and a label", () => {
+    const root = mount(`
+      <div data-rect="0,0,96,28" style="${fill}">
+        <svg data-rect="6,6,16,16"></svg>
+        <span data-rect="28,4,60,20" data-lines="28,4,60,20">Active</span>
+      </div>`);
+    expect(extractBones(root).map((b) => `${b.kind}:${b.width}`)).toEqual(["bone:96"]);
+  });
+
+  it("keeps a small container with more than two pieces as a frame", () => {
+    const root = mount(`
+      <div data-rect="0,0,120,48" style="${fill}">
+        <img data-rect="4,4,16,16" /><img data-rect="24,4,16,16" /><img data-rect="44,4,16,16" />
+      </div>`);
+    expect(extractBones(root).map((b) => b.kind)).toEqual(["surface", "bone", "bone", "bone"]);
+  });
+
+  it("keeps a large container as a frame however little is in it", () => {
+    const root = mount(
+      `<div data-rect="0,0,300,200" style="${fill}"><img data-rect="16,16,48,48" /></div>`,
+    );
+    expect(extractBones(root).map((b) => b.kind)).toEqual(["surface", "bone"]);
+  });
+
+  it("keeps a wide bar as a frame: a toolbar with a title is not a bone", () => {
+    const root = mount(`
+      <div data-rect="0,0,900,48" style="${fill}">
+        <span data-rect="16,14,80,20" data-lines="16,14,80,20">Title</span>
+      </div>`);
+    expect(extractBones(root).map((b) => b.kind)).toEqual(["surface", "bone"]);
+  });
+});
+
+describe("extractBones — clipping", () => {
+  const card =
+    "overflow:hidden;background-color:rgb(255, 255, 255);border-top-left-radius:16px;border-top-right-radius:16px;border-bottom-right-radius:16px;border-bottom-left-radius:16px";
+
+  it("clips a child to the rounded corners of an overflow:hidden parent", () => {
+    // A card header with a square background: unclipped, it paints over the
+    // card's rounded corners.
+    const root = mount(`
+      <div data-rect="0,0,300,200" style="${card}">
+        <div data-rect="0,0,300,50" style="background-color:rgb(240, 240, 240)">
+          <img data-rect="16,16,20,20" /><img data-rect="40,16,20,20" /><img data-rect="64,16,20,20" />
+        </div>
+      </div>`);
+    const header = extractBones(root)[1];
+    expect(header?.kind).toBe("surface");
+    expect(header?.clip).toEqual({ x: 0, y: 0, width: 300, height: 200, radius: "16px" });
+  });
+
+  it("clips to the inside of the border, with the radius reduced to match", () => {
+    const root = mount(`
+      <div data-rect="0,0,300,200" style="${card};border-top:2px solid rgb(0, 0, 0);border-right:2px solid rgb(0, 0, 0);border-bottom:2px solid rgb(0, 0, 0);border-left:2px solid rgb(0, 0, 0)">
+        <div data-rect="2,2,296,196" style="background-color:rgb(240, 240, 240)">
+          <img data-rect="16,16,20,20" /><img data-rect="40,16,20,20" /><img data-rect="64,16,20,20" />
+        </div>
+      </div>`);
+    expect(extractBones(root)[1]?.clip).toEqual({ x: 2, y: 2, width: 296, height: 196, radius: "14px" });
+  });
+
+  it("clips what sticks out of a scroll container and drops what is fully outside it", () => {
+    const root = mount(`
+      <div data-rect="0,0,200,100" style="overflow:auto">
+        <img data-rect="10,10,50,50" />
+        <img data-rect="150,10,100,50" />
+        <img data-rect="10,300,50,50" />
+      </div>`);
+    const bones = extractBones(root);
+    expect(bones.map(geometry)).toEqual([
+      { x: 10, y: 10, width: 50, height: 50 },
+      { x: 150, y: 10, width: 100, height: 50 },
+    ]);
+    expect(bones[0]?.clip).toBeUndefined();
+    expect(bones[1]?.clip).toEqual({ x: 0, y: 0, width: 200, height: 100, radius: "" });
+  });
+
+  it("leaves children of an overflow:visible parent alone", () => {
+    const root = mount(`
+      <div data-rect="0,0,200,100" style="background-color:rgb(255, 255, 255)">
+        <img data-rect="150,10,100,50" /><img data-rect="0,0,10,10" /><img data-rect="20,0,10,10" />
+      </div>`);
+    expect(extractBones(root).every((bone) => bone.clip === undefined)).toBe(true);
+  });
+});

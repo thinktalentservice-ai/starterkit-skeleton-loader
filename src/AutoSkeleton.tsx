@@ -6,7 +6,7 @@ import { alpha, keyframes } from "@mui/material/styles";
 import type { SxProps, Theme } from "@mui/material/styles";
 import { getSnapshot, setSnapshot } from "./cache";
 import { extractBones } from "./extract";
-import type { Bone, SurfaceStyle } from "./types";
+import type { Bone, BoneClip, SurfaceStyle } from "./types";
 
 export type AutoSkeletonProps = {
   /** Show the skeleton instead of the content. */
@@ -55,12 +55,15 @@ const INERT = (Number.parseInt(version, 10) >= 19 ? { inert: true } : { inert: "
 
 // margin/padding are reset because the overlay is a child of the wrapper, and
 // host rules like Bootstrap's `.row > *` would otherwise pad it.
+//
+// No `overflow: hidden`: a bone sits exactly where its element does, so it
+// overflows the wrapper only if the real content does — and a frame whose
+// shadow falls outside the wrapper would lose it.
 const OVERLAY_STYLE: CSSProperties = {
   position: "absolute",
   inset: 0,
   margin: 0,
   padding: 0,
-  overflow: "hidden",
   pointerEvents: "none",
 };
 
@@ -178,7 +181,31 @@ function boneStyle(bone: Bone): CSSProperties {
     // MUI's `rounded` uses the theme radius; the real element's is more faithful.
     style.borderRadius = bone.radius;
   }
+  if (bone.clip) style.clipPath = clipPath(bone, bone.clip);
   return style;
+}
+
+// MUI draws a text bone at 60% of its box height, scaled about a point 55%
+// down it. clip-path is applied before that transform, so a clip meant for the
+// page has to be stretched back by the same amount.
+const TEXT_SCALE = 0.6;
+const TEXT_ORIGIN = 0.55;
+
+/** The clipping ancestor's visible area, as an inset() of the bone's own box. */
+function clipPath(bone: Bone, clip: BoneClip): string {
+  const left = clip.x - bone.x;
+  const right = bone.x + bone.width - (clip.x + clip.width);
+  let top = clip.y - bone.y;
+  let bottom = bone.y + bone.height - (clip.y + clip.height);
+  if (bone.kind === "bone" && bone.variant === "text") {
+    const pivot = bone.height * TEXT_ORIGIN;
+    const unscale = (y: number) => pivot + (y - pivot) / TEXT_SCALE;
+    const lowerEdge = unscale(bone.height - bottom);
+    top = unscale(top);
+    bottom = bone.height - lowerEdge;
+  }
+  const inset = [top, right, bottom, left].map((value) => `${Math.round(value * 100) / 100}px`).join(" ");
+  return `inset(${inset}${clip.radius ? ` round ${clip.radius}` : ""})`;
 }
 
 /**

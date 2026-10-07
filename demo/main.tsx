@@ -33,6 +33,7 @@ const REAL: Account = {
 function AccountCard({ account }: { account: Account }) {
   return (
     <div className="card" data-testid="card">
+      <div className="banner" data-testid="banner" />
       <div className="head">
         <div className="avatar" data-testid="avatar" />
         <div>

@@ -146,6 +146,24 @@ The CSS skeleton is an approximation of the measured one:
 
 Set `mode="css"` to use it everywhere and skip measuring altogether.
 
+## What becomes what
+
+The measured skeleton follows a few rules, tuned on real screens (cards, a form
+page, a MUI data table):
+
+| In the content | In the skeleton |
+|---|---|
+| Text | One bar per rendered line, as wide as the words. |
+| `img`, `svg`, `button`, `input`, `select`, `textarea`, `video`, `canvas`, `iframe` | One bone the size of the element. |
+| A small painted box (up to 160 × 64px) holding at most two pieces — avatar, chip, badge, icon button | One bone. Repainting it in its own colour would look like live UI. |
+| Any other box with a background, border or shadow — card, panel, toolbar | Its frame, repainted as it is, with its content drawn inside. |
+| A table cell | Always a frame around its content, never a bone. |
+| An empty box that paints nothing | Nothing. |
+
+Content cut off by an ancestor's `overflow` is cut off in the skeleton too:
+rows scrolled out of a table are not drawn, and a square header inside a
+rounded `overflow: hidden` card gets the card's corners.
+
 ## Things to know
 
 - **Animations are off while content is hidden.** An entrance animation that

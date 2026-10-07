@@ -23,6 +23,18 @@ export type Bone = {
   /** Computed border-radius, "" when there is none. */
   radius: string;
   surface?: SurfaceStyle;
+  /** Set when an ancestor with `overflow` other than `visible` cuts this bone off. */
+  clip?: BoneClip;
+};
+
+/** The visible area of a clipping ancestor, in the same coordinates as the bone. */
+export type BoneClip = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Radius of the clipping area, "" when its corners are square. */
+  radius: string;
 };
 
 export type SkeletonSnapshot = {

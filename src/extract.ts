@@ -8,6 +8,7 @@ export type ExtractOptions = {
 export type LineRect = { left: number; top: number; right: number; bottom: number };
 
 // Elements whose inside is never worth describing: one box stands for all of it.
+// Keep in step with SHAPES in AutoSkeleton.tsx.
 const FORCED_LEAF_TAGS = new Set([
   "IMG",
   "SVG",
@@ -20,7 +21,19 @@ const FORCED_LEAF_TAGS = new Set([
   "BUTTON",
 ]);
 
+// Table structure is never a bone: a filled cell is a frame around its content,
+// however small it is and whatever it holds.
+const TABLE_TAGS = new Set(["TABLE", "THEAD", "TBODY", "TFOOT", "TR", "TD", "TH"]);
+
 const VARIANTS: readonly BoneVariant[] = ["text", "circular", "rounded", "rectangular"];
+
+// A painted box no bigger than this, holding at most COMPACT_PIECES pieces, is
+// one bone: an avatar, a chip, a badge, an icon button, a slider thumb.
+// Repainting those in their own colour reads as live UI, not as a skeleton.
+// Both limits matter — a 48px-tall toolbar is short but not small.
+const COMPACT_WIDTH = 160;
+const COMPACT_HEIGHT = 64;
+const COMPACT_PIECES = 2;
 
 const ELEMENT_NODE = 1;
 const TEXT_NODE = 3;
@@ -28,6 +41,8 @@ const TEXT_NODE = 3;
 const round = (n: number) => Math.round(n * 100) / 100;
 
 const hasArea = (r: LineRect) => r.right - r.left > 0 && r.bottom - r.top > 0;
+
+const isCompact = (r: LineRect) => r.right - r.left <= COMPACT_WIDTH && r.bottom - r.top <= COMPACT_HEIGHT;
 
 /**
  * Collapse the per-fragment rects a Range reports into one rect per rendered
@@ -94,6 +109,13 @@ function readSurface(style: CSSStyleDeclaration): SurfaceStyle | null {
   return Object.values(surface).some(Boolean) ? surface : null;
 }
 
+const isFilled = (surface: SurfaceStyle) => Boolean(surface.backgroundColor || surface.backgroundImage);
+
+/** A box in its own right: filled, or outlined on all four sides. */
+const isBox = (surface: SurfaceStyle) =>
+  isFilled(surface) ||
+  Boolean(surface.borderTop && surface.borderRight && surface.borderBottom && surface.borderLeft);
+
 /** The four corner radii as computed, top-left clockwise. */
 function readCorners(style: CSSStyleDeclaration): string[] {
   return [
@@ -137,6 +159,50 @@ function hasDirectText(el: Element): boolean {
   return false;
 }
 
+/** Visible area of a clipping ancestor, in viewport coordinates. */
+type Clip = LineRect & {
+  radius: string;
+  /** Largest corner radius in px: how far in from an edge a corner can cut. */
+  reach: number;
+};
+
+const clipsOverflow = (style: CSSStyleDeclaration) =>
+  [style.overflowX, style.overflowY, style.overflow].some((value) => Boolean(value) && value !== "visible");
+
+/**
+ * What an element with clipping overflow lets through: its padding box, with
+ * corners rounded to follow the inside of its border.
+ */
+function readClip(rect: LineRect, style: CSSStyleDeclaration, outer: Clip | null): Clip {
+  const border = (side: Side) => {
+    const width = parseFloat(style[`border${side}Width`]);
+    return style[`border${side}Style`] === "none" || !(width > 0) ? 0 : width;
+  };
+  const [top, right, bottom, left] = [border("Top"), border("Right"), border("Bottom"), border("Left")];
+  const corners = readCorners(style);
+  const simple = corners.every((corner) => /^[\d.]+px$/.test(corner));
+  // Each corner is cut by the wider of the two borders that meet at it.
+  const insets = [Math.max(top, left), Math.max(top, right), Math.max(bottom, right), Math.max(bottom, left)];
+  const inner = simple
+    ? corners.map((corner, index) => `${Math.max(0, parseFloat(corner) - (insets[index] ?? 0))}px`)
+    : corners;
+  const box = {
+    left: rect.left + left,
+    top: rect.top + top,
+    right: rect.right - right,
+    bottom: rect.bottom - bottom,
+  };
+  return {
+    // Nested clippers narrow the area; the radius followed is the nearest one's.
+    left: outer ? Math.max(box.left, outer.left) : box.left,
+    top: outer ? Math.max(box.top, outer.top) : box.top,
+    right: outer ? Math.min(box.right, outer.right) : box.right,
+    bottom: outer ? Math.min(box.bottom, outer.bottom) : box.bottom,
+    radius: cornersToCss(inner),
+    reach: simple ? Math.max(...inner.map((corner) => parseFloat(corner))) : Math.min(rect.right - rect.left, rect.bottom - rect.top) / 2,
+  };
+}
+
 /**
  * Walk `root`'s descendants and describe them as skeleton bones.
  *
@@ -163,8 +229,27 @@ export function extractBones(root: Element, options: ExtractOptions = {}): Bone[
     height: round(rect.bottom - rect.top),
   });
 
-  const pushShape = (el: Element, rect: DOMRect, style: CSSStyleDeclaration) => {
+  /** Adds a bone, cut to — or dropped by — the clipping ancestor it sits in. */
+  const emit = (bone: Pick<Bone, "kind" | "variant" | "radius" | "surface">, rect: LineRect, clip: Clip | null) => {
     if (!hasArea(rect)) return;
+    const placed: Bone = { ...bone, ...place(rect) };
+    if (clip) {
+      const outside =
+        rect.right <= clip.left || rect.left >= clip.right || rect.bottom <= clip.top || rect.top >= clip.bottom;
+      // Scrolled out of view: the real element is not painted, so neither is its bone.
+      if (outside) return;
+      const sticksOut =
+        rect.left < clip.left || rect.top < clip.top || rect.right > clip.right || rect.bottom > clip.bottom;
+      const inCorner =
+        clip.reach > 0 &&
+        (rect.left < clip.left + clip.reach || rect.right > clip.right - clip.reach) &&
+        (rect.top < clip.top + clip.reach || rect.bottom > clip.bottom - clip.reach);
+      if (sticksOut || inCorner) placed.clip = { ...place(clip), radius: clip.radius };
+    }
+    bones.push(placed);
+  };
+
+  const pushShape = (el: Element, rect: DOMRect, style: CSSStyleDeclaration, clip: Clip | null) => {
     const corners = readCorners(style);
     const radius = cornersToCss(corners);
     const forced = el.getAttribute("data-skeleton-variant") as BoneVariant | null;
@@ -176,10 +261,14 @@ export function extractBones(root: Element, options: ExtractOptions = {}): Bone[
           : radius
             ? "rounded"
             : "rectangular";
-    bones.push({ kind: "bone", variant, ...place(rect), radius });
+    emit({ kind: "bone", variant, radius }, rect, clip);
   };
 
-  const pushLines = (node: Node, clamp: DOMRect | null) => {
+  const pushSurface = (rect: DOMRect, style: CSSStyleDeclaration, surface: SurfaceStyle, clip: Clip | null) => {
+    emit({ kind: "surface", variant: "rectangular", radius: cornersToCss(readCorners(style)), surface }, rect, clip);
+  };
+
+  const pushLines = (node: Node, clamp: DOMRect | null, clip: Clip | null) => {
     const range = doc.createRange();
     range.selectNodeContents(node);
     // jsdom and a few embedded webviews ship Range without layout methods.
@@ -201,8 +290,7 @@ export function extractBones(root: Element, options: ExtractOptions = {}): Bone[
               bottom: Math.min(line.bottom, clamp.bottom),
             }
           : line;
-      if (!hasArea(visible)) continue;
-      bones.push({ kind: "bone", variant: "text", ...place(visible), radius: "" });
+      emit({ kind: "bone", variant: "text", radius: "" }, visible, clip);
     }
   };
 
@@ -212,30 +300,34 @@ export function extractBones(root: Element, options: ExtractOptions = {}): Bone[
       return Boolean(content) && !["none", "normal", '""', "''"].includes(content);
     });
 
-  const walkChildren = (el: Element, clamp: DOMRect | null) => {
+  const walkChildren = (el: Element, clamp: DOMRect | null, clip: Clip | null) => {
     for (const node of Array.from(el.childNodes)) {
-      if (node.nodeType === ELEMENT_NODE) walk(node as Element);
-      else if (node.nodeType === TEXT_NODE && /\S/.test(node.nodeValue ?? "")) pushLines(node, clamp);
+      if (node.nodeType === ELEMENT_NODE) walk(node as Element, clip);
+      else if (node.nodeType === TEXT_NODE && /\S/.test(node.nodeValue ?? "")) pushLines(node, clamp, clip);
     }
   };
 
-  const walk = (el: Element) => {
+  const walk = (el: Element, clip: Clip | null) => {
     const style = view.getComputedStyle(el);
     if (el.hasAttribute("data-skeleton-ignore") || style.display === "none" || parseFloat(style.opacity) === 0) {
       return;
     }
     // No box of its own, so its rect is empty — but its children are laid out.
     if (style.display === "contents") {
-      walkChildren(el, null);
+      walkChildren(el, null, clip);
       return;
     }
 
     const rect = el.getBoundingClientRect();
+    const tag = el.tagName.toUpperCase();
 
-    if (FORCED_LEAF_TAGS.has(el.tagName.toUpperCase()) || el.hasAttribute("data-skeleton-leaf")) {
-      pushShape(el, rect, style);
+    if (FORCED_LEAF_TAGS.has(tag) || el.hasAttribute("data-skeleton-leaf")) {
+      pushShape(el, rect, style, clip);
       return;
     }
+
+    const surface = readSurface(style);
+    const tablePart = TABLE_TAGS.has(tag) || style.display.startsWith("table");
 
     const directText = hasDirectText(el);
     const inlineOnly = Array.from(el.children).every(
@@ -243,31 +335,41 @@ export function extractBones(root: Element, options: ExtractOptions = {}): Bone[
     );
 
     if (directText && inlineOnly) {
-      // A painted text box is a chip or badge: the box is the shape, not its words.
-      if (readSurface(style)) pushShape(el, rect, style);
-      else pushLines(el, rect);
+      // A small filled text box is a chip or badge: the box is the shape, not
+      // its words. Anything else keeps its words as lines over its own frame —
+      // an underlined heading, a table cell, a filled paragraph.
+      if (surface && isFilled(surface) && isCompact(rect) && !tablePart) {
+        pushShape(el, rect, style, clip);
+      } else {
+        if (surface) pushSurface(rect, style, surface, clip);
+        pushLines(el, rect, clip);
+      }
       return;
     }
 
     if (el.childElementCount === 0) {
       // Childless and textless: a bone only if something is actually painted.
-      if (readSurface(style) || hasPseudoContent(el)) pushShape(el, rect, style);
+      if (tablePart) {
+        if (surface) pushSurface(rect, style, surface, clip);
+      } else if (surface || hasPseudoContent(el)) {
+        pushShape(el, rect, style, clip);
+      }
       return;
     }
 
-    const surface = readSurface(style);
-    if (surface && hasArea(rect)) {
-      bones.push({
-        kind: "surface",
-        variant: "rectangular",
-        ...place(rect),
-        radius: cornersToCss(readCorners(style)),
-        surface,
-      });
+    const start = bones.length;
+    if (surface) pushSurface(rect, style, surface, clip);
+    walkChildren(el, rect, clipsOverflow(style) ? readClip(rect, style, clip) : clip);
+
+    if (surface && isBox(surface) && isCompact(rect) && !tablePart) {
+      const pieces = bones.slice(start).filter((bone) => bone.kind === "bone").length;
+      if (pieces <= COMPACT_PIECES) {
+        bones.length = start;
+        pushShape(el, rect, style, clip);
+      }
     }
-    walkChildren(el, rect);
   };
 
-  walkChildren(root, null);
+  walkChildren(root, null, null);
   return bones;
 }

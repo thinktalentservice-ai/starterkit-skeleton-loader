@@ -140,6 +140,40 @@ test("the card frame is repainted with its own radius, not turned into a bone", 
   }
 });
 
+test("a bone inside an overflow:hidden card is cut to the card's rounded corners", async ({ page }) => {
+  // demo's .banner is square-cornered and flush with the card's top edge; the
+  // card (1px border, 16px radius, overflow hidden) is what rounds it.
+  await page.goto("/");
+  const banner = await page.evaluate(() => {
+    const el = document.querySelector('[data-auto-skeleton-content] [data-testid="banner"]');
+    const overlay = document.querySelector("[data-auto-skeleton-overlay]");
+    if (!el || !overlay) return null;
+    const rect = el.getBoundingClientRect();
+    const origin = overlay.getBoundingClientRect();
+    const bone = Array.from(overlay.querySelectorAll<HTMLElement>(".MuiSkeleton-root")).find(
+      (candidate) =>
+        Math.abs(origin.left + parseFloat(candidate.style.left) - rect.left) <= 1 &&
+        Math.abs(origin.top + parseFloat(candidate.style.top) - rect.top) <= 1 &&
+        Math.abs(parseFloat(candidate.style.height) - rect.height) <= 1,
+    );
+    return bone ? getComputedStyle(bone).clipPath : "no bone";
+  });
+  // Flush on three sides, the card's inner radius (16px - 1px border), and a
+  // negative bottom inset because the card extends far below the banner.
+  expect(banner).toMatch(/^inset\(0px 0px -[\d.]+px(?: 0px)? round 15px\)$/);
+});
+
+test("a frame's shadow is not cut off at the wrapper's edge", async ({ page }) => {
+  await page.goto("/");
+  const overlay = page.locator("[data-auto-skeleton-overlay]");
+  expect(await overlay.evaluate((el) => getComputedStyle(el).overflow)).toBe("visible");
+  const shadow = await page
+    .locator("[data-auto-skeleton-surface]")
+    .first()
+    .evaluate((el) => getComputedStyle(el).boxShadow);
+  expect(shadow).not.toBe("none");
+});
+
 test("bones follow the layout when the viewport is resized", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 900 });
   await page.goto("/");
