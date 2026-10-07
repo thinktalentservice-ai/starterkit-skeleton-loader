@@ -67,62 +67,74 @@ Pure DOM read; no React. Walks `root`'s descendants in document order.
 type Bone = {
   kind: "bone" | "surface";
   variant: "text" | "circular" | "rounded" | "rectangular";
-  x: number; y: number; width: number; height: number; // px, relative to root's border box
+  x: number; y: number; width: number; height: number; // px from the origin's padding box
   radius: string;                                       // computed border-radius, "" if none
-  surface?: { background: string; border: string; boxShadow: string }; // kind === "surface"
+  surface?: SurfaceStyle; // kind === "surface": background colour/image, four borders, shadow
 };
 ```
 
-Rules, applied per element:
+`options.origin` is the element coordinates are relative to (default `root`).
 
-1. **Skip** when `display: none`, `opacity: 0`, zero-area rect, or `data-skeleton-ignore`.
-   `visibility: hidden` is *not* a skip reason — the component hides the measured layer
-   that way.
-2. **Leaf** when any of: no element children; tag is `img`, `svg`, `video`, `canvas`,
-   `input`, `textarea`, `select`, `button`; has `data-skeleton-leaf`; or is a text block
-   (`p`, `h1`–`h6`, `li`, `td`, `th`, `label`, `span`, `a`) whose element children are
-   all inline.
-3. **Leaf with text** → one `text` bone per rendered line. Lines come from
-   `Range.getClientRects()` over the leaf's text nodes, merged when their tops differ by
-   under 2px. A wrapped paragraph becomes several bars, each as wide as its line.
-4. **Leaf without text** → one bone from `getBoundingClientRect()`. Variant: `circular`
-   when the box is square within 1px and the radius is at least half its side;
-   `rounded` when the radius is non-zero; otherwise `rectangular`.
-5. **Container with a visible surface** (non-transparent background, a border, or a box
-   shadow) → emit a `surface` bone carrying the computed background, border, radius and
-   shadow, then descend. This is what keeps a card's frame on screen while its content
-   is hidden.
-6. **Other containers** → descend, emit nothing.
+Rules, first match wins, applied per element:
+
+1. **Skip the subtree** on `data-skeleton-ignore`, `display: none` or `opacity: 0`.
+   `visibility: hidden` is *not* a skip reason — the component hides the measured
+   content that way.
+2. **`display: contents`** → descend, emit nothing (its own rect is empty).
+3. **Forced leaf** — `img`, `svg`, `video`, `canvas`, `iframe`, `input`, `textarea`,
+   `select`, `button`, or `data-skeleton-leaf` → one shape bone from
+   `getBoundingClientRect()`.
+4. **Text leaf** — has a non-whitespace direct text node and every element child is
+   `display: inline`. With a visible surface (a chip or badge) → one shape bone.
+   Otherwise one `text` bone per rendered line: `Range.getClientRects()`, merged into
+   lines, clamped to the element's rect. A wrapped paragraph becomes several bars, each
+   as wide as its line.
+5. **Childless element** → a shape bone only when it has a visible surface or
+   `::before` / `::after` content (icon fonts). An empty spacer emits nothing.
+6. **Container with a visible surface** → a `surface` bone carrying the computed
+   background, borders, radius and shadow, then descend. This is what keeps a card's
+   frame on screen while its content is hidden.
+7. **Other containers** → descend, emit nothing.
+
+A visible surface is a non-transparent background colour, a background image, a painted
+border side, or a box shadow. Shape variant: `circular` when the box is square within
+1px and the radius is at least half its side; `rounded` when any corner radius is
+non-zero; otherwise `rectangular`. Zero-area rects never emit a bone.
 
 Surfaces are emitted before their children, so painting in array order layers correctly.
 
 ### `src/AutoSkeleton.tsx`
 
-Wrapper: `position: relative`, `aria-busy={loading}`, `minHeight`.
+Wrapper: `position: relative`, `aria-busy={loading}`, `minHeight`. Inside it a content
+element with `display: contents` always holds the children, so they lay out as direct
+children of the wrapper and keep their state when `loading` flips.
 
 While `loading`:
 
-- **Content layer** renders `fixture ?? children` with `visibility: hidden`, `inert`
-  and `aria-hidden`. It still takes up its natural space, so the page does not shift
-  when loading ends.
-- **Overlay layer** is absolutely positioned over the wrapper, `pointer-events: none`.
+- **Content** is `fixture ?? children` with `visibility: hidden`, `inert` and
+  `aria-hidden`. It still takes up its natural space, so the page does not shift when
+  loading ends.
+- **Overlay** is absolutely positioned over the wrapper, `pointer-events: none`.
   `surface` bones render as plain `<div>`s with the copied styles; `bone` bones render
   as MUI `<Skeleton>` at their measured position and size.
 
 Measurement runs in `useLayoutEffect`, so on a client render the bones paint in the same
-frame as the hidden content. A `ResizeObserver` on the content layer re-measures on size
+frame as the hidden content. A `ResizeObserver` on the wrapper re-measures on size
 changes (coalesced to one per animation frame); this is why no breakpoint list is needed.
 
-Fallback order when measuring: bones measured now → cached bones for `name` → a single
-`rounded` `<Skeleton>` filling the wrapper. The single block is also what server-rendered
-or statically exported HTML shows until hydration, because layout cannot be measured at
-build time.
+Fallback order: bones measured now → the cached snapshot for `name` (its height is
+reserved too) → a single `rounded` `<Skeleton>` filling the wrapper. The single block is
+also what server-rendered or statically exported HTML shows until hydration, because
+layout cannot be measured at build time.
 
-When `loading` is false the wrapper renders `children` and nothing else.
+When `loading` is false the overlay is gone and `children` is visible. If `name` is set,
+the loaded content is measured once and cached, so a later load with nothing to measure
+still gets the real shape.
 
 ### `src/cache.ts`
 
-In-memory `Map<string, Bone[]>` with `get`, `set`, `clear`. Lives for the page session.
+In-memory `Map<string, SkeletonSnapshot>` (`{ bones, width, height }`) with `getSnapshot`,
+`setSnapshot`, `clearSkeletonCache`. Lives for the page session.
 
 ## Package shape
 
