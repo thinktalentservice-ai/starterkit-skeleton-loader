@@ -46,15 +46,47 @@ test("exactly one captured layer shows, chosen by viewport width", async ({ page
   expect(await visibleLayers(page)).toEqual(["375"]);
 });
 
-test("the captured height is reserved, so the page does not jump when content arrives", async ({ page }) => {
+/* "The page does not jump when content arrives" is two claims, tested apart.
+   Comparing the committed capture's height with the live page in one step
+   failed on CI by 2px: the file was captured on Windows, CI renders on Linux,
+   and the two wrap the demo's system-ui text differently. A capture is only
+   as exact as the machine it was taken on resembles the one showing it. */
+test("the height in the captured file is what the empty wrapper reserves", async ({ page }) => {
+  const file = JSON.parse(await readFile(path.join("demo", "accounts.bones.json"), "utf8"));
   await page.goto("/?fixture=0&captured=1");
-  const wrapper = page.locator("[data-auto-skeleton]");
-  const reserved = await wrapper.evaluate((el) => el.getBoundingClientRect().height);
+  const reserved = await page.locator("[data-auto-skeleton]").evaluate((el) => el.getBoundingClientRect().height);
+  expect(Math.abs(reserved - file.breakpoints["1280"].height)).toBeLessThanOrEqual(1);
+});
 
-  await page.getByTestId("toggle").click();
-  await expect(page.getByText("Ada Lovelace").first()).toBeVisible();
-  const loaded = await wrapper.evaluate((el) => el.getBoundingClientRect().height);
-  expect(Math.abs(reserved - loaded)).toBeLessThanOrEqual(1);
+test("a capture records the height the content really has", async ({ page, baseURL }) => {
+  // Captured here, on whatever machine runs this, then compared with the same
+  // page in the same browser — so fonts cannot differ between the two.
+  const out = await mkdtemp(path.join(tmpdir(), "auto-skeleton-"));
+  try {
+    await run(process.execPath, [
+      "bin/auto-skeleton.mjs",
+      "--url",
+      `${baseURL}/?loading=0`,
+      "--out",
+      out,
+      "--breakpoints",
+      "1280",
+      "--wait",
+      "300",
+    ]);
+    const fresh = JSON.parse(await readFile(path.join(out, "accounts.bones.json"), "utf8"));
+
+    await page.goto("/?loading=0");
+    const wrapper = page.locator("[data-auto-skeleton]");
+    await expect(page.getByText("Ada Lovelace").first()).toBeVisible();
+    const loaded = await wrapper.evaluate(async (el) => {
+      await Promise.all(el.getAnimations({ subtree: true }).map((animation) => animation.finished));
+      return el.getBoundingClientRect().height;
+    });
+    expect(Math.abs(fresh.breakpoints["1280"].height - loaded)).toBeLessThanOrEqual(1);
+  } finally {
+    await rm(out, { recursive: true, force: true });
+  }
 });
 
 test("captured bones sit where the real content then appears", async ({ page }) => {
