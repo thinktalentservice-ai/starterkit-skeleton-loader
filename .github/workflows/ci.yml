@@ -1,13 +1,26 @@
 name: CI
 
+# Runs on every push (any branch) and on every pull request. The `verify` job
+# is the required status check that gates merging — see README "Releasing".
 on:
   push:
-    branches: [main]
+    branches: ["**"]
+    # A tag push is a release; release.yml owns that.
+    tags-ignore: ["**"]
   pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same ref makes the older run pointless.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       # v7 targets Node 24 natively; matches the sibling starterkit repos.
       - uses: actions/checkout@v7
@@ -23,6 +36,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # typecheck + unit tests + build (tsc --noEmit && tsup).
       - run: pnpm verify
 
       # jsdom cannot lay anything out, so `pnpm verify` only proves the
