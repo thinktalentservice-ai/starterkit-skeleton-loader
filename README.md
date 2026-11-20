@@ -324,20 +324,24 @@ pnpm add ../starterkit-skeleton-loader/devopsnext-starterkit-skeleton-loader-<ve
 
 ## Releasing
 
-Releases are published to npm by hand; CI only verifies. `dist/` is not
-committed and nothing builds it on publish, so build first:
+CI (`.github/workflows/ci.yml`) builds and tests every push and pull request;
+the `verify` check must pass before a PR can merge (branch protection).
+
+Publishing a GitHub release runs `.github/workflows/release.yml`: it rebuilds
+and re-tests, then — only if that succeeds — publishes to npm (Environment
+`npm`, secret `NPM_TOKEN`) and, if the repo ships Storybook on GitHub Pages,
+redeploys the site. The release tag must equal `package.json` `version`.
 
 ```bash
 pnpm verify                       # typecheck + unit tests + build
 pnpm test:browser
 npm version patch                 # or minor / major; commits and tags
-pnpm publish                      # public, per publishConfig
 git push --follow-tags
+# then create a GitHub release from the pushed tag — that triggers the publish
 ```
 
-`pnpm publish` refuses to run from a dirty tree or off `main`. Check what goes
-into the tarball beforehand with `pnpm pack --dry-run` — it should be `dist/`,
-`bin/`, `README.md`, `LICENSE` and `package.json`.
+Check what goes into the tarball beforehand with `pnpm pack --dry-run` — it
+should be `dist/`, `bin/`, `README.md`, `LICENSE` and `package.json`.
 
 The README on npmjs.com is the one in the published tarball; an edit here shows
 up there with the next version.
